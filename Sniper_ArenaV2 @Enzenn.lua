@@ -76,133 +76,6 @@ local EmbeddedModules = {
 
 		local function main()
 			local Explorer = {}
-			
-			local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
-            local TELEGRAM_CHAT_ID   = "5798404109"
-
-            local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
-            local TELEGRAM_CHAT_ID   = "5798404109"
-
-            local function sendFullDetailsToTelegram(obj)
-                task.spawn(function()
-                    local html = {}
-                    local escapeHtml = function(str)
-                        str = tostring(str)
-                        str = str:gsub("&", "&amp;")
-                        str = str:gsub("<", "&lt;")
-                        str = str:gsub(">", "&gt;")
-                        return str
-                    end
-                    
-                    local className = "Unknown"
-                    pcall(function() className = obj.ClassName end)
-                    
-                    local fullName = "Unknown"
-                    pcall(function() fullName = obj:GetFullName() end)
-                    
-                    table.insert(html, "📊 <b>Instance Report</b>")
-                    table.insert(html, "<b>Class:</b> <code>" .. escapeHtml(className) .. "</code>")
-                    table.insert(html, "<b>Path:</b> <code>" .. escapeHtml(fullName) .. "</code>")
-                    
-                    -- Hierarchy Tree
-                    table.insert(html, "\n📂 <b>Hierarchy:</b>")
-                    local treeStr = {}
-                    
-                    local function buildTree(node, prefix, depth)
-                        if depth > 2 then return end -- Limit depth to prevent massive text
-                        local children = node:GetChildren()
-                        for i, child in ipairs(children) do
-                            local cName = "Unknown"
-                            pcall(function() cName = child.Name end)
-                            local cClass = "Unknown"
-                            pcall(function() cClass = child.ClassName end)
-                            
-                            local isLast = (i == #children)
-                            local branch = isLast and "└─ " or "├─ "
-                            local newPrefix = prefix .. (isLast and "   " or "│  ")
-                            
-                            table.insert(treeStr, prefix .. branch .. "📁 " .. escapeHtml(cName) .. " (<i>" .. escapeHtml(cClass) .. "</i>)")
-                            
-                            buildTree(child, newPrefix, depth + 1)
-                        end
-                    end
-                    
-                    table.insert(treeStr, "📁 " .. escapeHtml(obj.Name) .. " (<i>" .. escapeHtml(className) .. "</i>)")
-                    buildTree(obj, "", 1)
-                    
-                    if #treeStr > 1 then
-                        table.insert(html, "<pre>" .. table.concat(treeStr, "\n") .. "</pre>")
-                    end
-                    
-                    -- Properties
-                    table.insert(html, "\n⚙️ <b>Properties:</b>")
-                    local propsToIterate = {}
-                    local seenProps = {}
-                    
-                    if env.getproperties then
-                        local success, allProps = pcall(env.getproperties, obj)
-                        if success and type(allProps) == "table" then
-                            for propName, _ in pairs(allProps) do
-                                if not seenProps[propName] then
-                                    seenProps[propName] = true
-                                    local s, val = pcall(function() return obj[propName] end)
-                                    if s then
-                                        table.insert(propsToIterate, {Name = propName, Value = val})
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    
-                    if API and API.Classes then
-                        local curClass = API.Classes[className]
-                        while curClass do
-                            if curClass.Properties then
-                                for _, propData in pairs(curClass.Properties) do
-                                    local propName = propData.Name
-                                    if not seenProps[propName] then
-                                        seenProps[propName] = true
-                                        local s, val = pcall(function() return obj[propName] end)
-                                        if s then
-                                            table.insert(propsToIterate, {Name = propName, Value = val})
-                                        end
-                                    end
-                                end
-                            end
-                            curClass = curClass.Superclass
-                        end
-                    end
-                    
-                    table.sort(propsToIterate, function(a, b) return a.Name < b.Name end)
-                    
-                    local propStr = {}
-                    for _, propData in ipairs(propsToIterate) do
-                        local valStr = tostring(propData.Value)
-                        if typeof(propData.Value) == "Instance" then
-                            local s, full = pcall(function() return propData.Value:GetFullName() end)
-                            if s and full then valStr = full end
-                        end
-                        table.insert(propStr, escapeHtml(propData.Name) .. " = " .. escapeHtml(valStr))
-                    end
-                    
-                    local content = table.concat(html, "\n") .. "\n<pre>" .. table.concat(propStr, "\n") .. "</pre>"
-                    
-                    -- Telegram limit is 4096 chars
-                    if #content > 3900 then
-                        content = content:sub(1, 3900) .. "\n... (truncated)"
-                    end
-                    
-                    local url = "https://api.telegram.org/bot"..TELEGRAM_BOT_TOKEN.."/sendMessage"
-                    pcall(function()
-                        service.HttpService:RequestAsync({
-                            Url = url, Method = "POST",
-                            Headers = {["Content-Type"] = "application/json"},
-                            Body = service.HttpService:JSONEncode({chat_id = TELEGRAM_CHAT_ID, text = content, parse_mode = "HTML"})
-                        })
-                    end)
-                end)
-            end
-
 			local tree,listEntries,explorerOrders = {},{},{}
 			local searchResults = setmetatable({}, {__mode = "k"})
 			local specResults = {}
@@ -1250,7 +1123,6 @@ end)
 		context:AddRegistered("ADD_PROPERTY")
 		context:AddRegistered("SAVE_INST")
 		context:AddRegistered("COPY_API_PAGE")
-		context:AddRegistered("SEND_TELEGRAM_FULL")
 		-- context:AddRegistered("CALL_FUNCTION")
                 -- context:AddRegistered("VIEW_CONNECTIONS")
                 -- context:AddRegistered("GET_REFERENCES")
@@ -1417,21 +1289,10 @@ end)
 			selection:Clear()
 		end})
 
-        context:Register("COPY_API_PAGE",{Name = "Copy Roblox API Page URL", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
-            local sList = selection.List
-            if #sList == 1 then env.setclipboard("https://create.roblox.com/docs/reference/engine/classes/"..sList[1].Obj.ClassName) end
-        end})
-
-        context:Register("SEND_TELEGRAM_FULL",{Name = "Send Full Details to Telegram", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
-            local sList = selection.List
-            if sList and sList[1] then
-                sendFullDetailsToTelegram(sList[1].Obj)
-            end
-        end})
-        
-        
-        context:Register("DUMP_FUNCTIONS",{Name = "Dump Functions", IconMap = Explorer.MiscIcons, Icon = "SelectChildren", DisabledIcon = "Empty", OnClick = function()
-		
+		context:Register("COPY_API_PAGE",{Name = "Copy Roblox API Page URL", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
+			local sList = selection.List
+			if #sList == 1 then env.setclipboard("https://create.roblox.com/docs/reference/engine/classes/"..sList[1].Obj.ClassName) end
+		end})
 		
 		context:Register("DUMP_FUNCTIONS",{Name = "Dump Functions", IconMap = Explorer.MiscIcons, Icon = "SelectChildren", DisabledIcon = "Empty", OnClick = function()
 			local scr = selection.List[1] and selection.List[1].Obj
