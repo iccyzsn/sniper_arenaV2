@@ -1,8 +1,17 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+
+--// Hide UI from Anti-Cheat
+-- gethui() is a special executor function. If it doesn't exist, we use CoreGui.
+local uiParent = (gethui and gethui()) or CoreGui
+
+-- Remove old UI if it exists
+if uiParent:FindFirstChild("HiddenMenu") then
+    uiParent.HiddenMenu:Destroy()
+end
 
 --// Theme
 local Theme = {
@@ -16,16 +25,12 @@ local Theme = {
     Danger = Color3.fromRGB(200, 50, 50)
 }
 
--- Remove old UI if it exists
-if playerGui:FindFirstChild("ExecutorMenu") then
-    playerGui.ExecutorMenu:Destroy()
-end
-
 --// Core Setup
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ExecutorMenu"
+screenGui.Name = "HiddenMenu"
 screenGui.ResetOnSpawn = false
-screenGui.Parent = playerGui
+screenGui.IgnoreGuiInset = true -- Prevents it from hiding behind the top bar
+screenGui.Parent = uiParent -- Hidden inside CoreGui
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(0, 500, 0, 350)
@@ -125,6 +130,8 @@ mainPage.Visible = true
 ---------------------------------------------------------
 -- UI ELEMENTS
 ---------------------------------------------------------
+local infJumpConn = nil
+
 local function createToggle(parent, text, callback)
     local holder = Instance.new("Frame")
     holder.Size = UDim2.new(1, -10, 0, 40)
@@ -205,35 +212,32 @@ local function createSlider(parent, text, min, max, default, callback)
 end
 
 ---------------------------------------------------------
--- POPULATE MENU (Local Features Only)
+-- POPULATE MENU
 ---------------------------------------------------------
 createToggle(mainPage, "Infinite Jump", function(state)
-    local conn
     if state then
-        conn = UserInputService.JumpRequest:Connect(function()
+        infJumpConn = UserInputService.JumpRequest:Connect(function()
             local char = player.Character
             if char and char:FindFirstChild("Humanoid") then
                 char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
             end
         end)
-        -- Store connection to disconnect later
-        getgenv().InfJumpConn = conn
     else
-        if getgenv().InfJumpConn then
-            getgenv().InfJumpConn:Disconnect()
-            getgenv().InfJumpConn = nil
+        if infJumpConn then
+            infJumpConn:Disconnect()
+            infJumpConn = nil
         end
     end
 end)
 
-createSlider(mainPage, "WalkSpeed", 16, 250, 16, function(val)
+createSlider(mainPage, "WalkSpeed", 16, 500, 16, function(val)
     local char = player.Character
     if char and char:FindFirstChild("Humanoid") then
         char.Humanoid.WalkSpeed = val
     end
 end)
 
-createSlider(mainPage, "Jump Power", 50, 250, 50, function(val)
+createSlider(mainPage, "Jump Power", 50, 500, 50, function(val)
     local char = player.Character
     if char and char:FindFirstChild("Humanoid") then
         char.Humanoid.UseJumpPower = true
@@ -293,3 +297,5 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         mainFrame.Visible = not mainFrame.Visible
     end
 end)
+
+print("UI Loaded Successfully! Press P to toggle.")
