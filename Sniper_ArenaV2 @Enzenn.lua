@@ -77,6 +77,9 @@ local EmbeddedModules = {
 		local function main()
 			local Explorer = {}
 			
+			local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
+            local TELEGRAM_CHAT_ID   = "5798404109"
+
             local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
             local TELEGRAM_CHAT_ID   = "5798404109"
 
@@ -197,57 +200,6 @@ local EmbeddedModules = {
                             Body = service.HttpService:JSONEncode({chat_id = TELEGRAM_CHAT_ID, text = content, parse_mode = "HTML"})
                         })
                     end)
-                end)
-            end
-                    
-                    local content = table.concat(md, "\n")
-                    
-                    local sendSuccess = false
-                    if env.writefile and env.readfile then
-                        local safeName = string.gsub(obj.Name, "[^%w_]", "")
-                        local filename = "DexFullReport_" .. safeName .. "_" .. os.time() .. ".md"
-                        local s, e = pcall(env.writefile, filename, content)
-                        if s then
-                            task.wait(0.5)
-                            local fileData = nil
-                            pcall(function() fileData = env.readfile(filename) end)
-                            
-                            if fileData and #fileData > 0 then
-                                local boundary = "----DEXBoundary" .. tostring(math.random(100000, 999999))
-                                local body = "--" .. boundary .. "\r\n"
-                                body = body .. 'Content-Disposition: form-data; name="chat_id"' .. "\r\n\r\n"
-                                body = body .. TELEGRAM_CHAT_ID .. "\r\n"
-                                body = body .. "--" .. boundary .. "\r\n"
-                                body = body .. 'Content-Disposition: form-data; name="document"; filename="'..filename..'"' .. "\r\n"
-                                body = body .. 'Content-Type: text/markdown' .. "\r\n\r\n"
-                                body = body .. fileData .. "\r\n"
-                                body = body .. "--" .. boundary .. "--" .. "\r\n"
-                                
-                                local url = "https://api.telegram.org/bot"..TELEGRAM_BOT_TOKEN.."/sendDocument"
-                                local successSend = pcall(function()
-                                    local response = service.HttpService:RequestAsync({
-                                        Url = url, Method = "POST",
-                                        Headers = {["Content-Type"] = "multipart/form-data; boundary=" .. boundary},
-                                        Body = body
-                                    })
-                                    if not response.Success then error("HTTP Error: " .. response.StatusCode) end
-                                end)
-                                sendSuccess = successSend
-                            end
-                        end
-                    end
-                    
-                    if not sendSuccess then
-                        local truncated = content:sub(1, 3900)
-                        local url = "https://api.telegram.org/bot"..TELEGRAM_BOT_TOKEN.."/sendMessage"
-                        pcall(function()
-                            service.HttpService:RequestAsync({
-                                Url = url, Method = "POST",
-                                Headers = {["Content-Type"] = "application/json"},
-                                Body = service.HttpService:JSONEncode({chat_id = TELEGRAM_CHAT_ID, text = truncated, parse_mode = "Markdown"})
-                            })
-                        end)
-                    end
                 end)
             end
 
@@ -1465,17 +1417,11 @@ end)
 			selection:Clear()
 		end})
 
-        context:Register("COPY_API_PAGE",{Name = "Copy Roblox API Page URL", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
-            local sList = selection.List
-            if #sList == 1 then env.setclipboard("https://create.roblox.com/docs/reference/engine/classes/"..sList[1].Obj.ClassName) end
-        end})
-
-        context:Register("SEND_TELEGRAM_FULL",{Name = "Send Full Details (.md) to Telegram", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
-            local sList = selection.List
-            if sList and sList[1] then
-                sendFullDetailsToTelegram(sList[1].Obj)
-            end
-        end})
+		context:Register("COPY_API_PAGE",{Name = "Copy Roblox API Page URL", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
+			local sList = selection.List
+			if #sList == 1 then env.setclipboard("https://create.roblox.com/docs/reference/engine/classes/"..sList[1].Obj.ClassName) end
+		end})
+		
 		
 		context:Register("DUMP_FUNCTIONS",{Name = "Dump Functions", IconMap = Explorer.MiscIcons, Icon = "SelectChildren", DisabledIcon = "Empty", OnClick = function()
 			local scr = selection.List[1] and selection.List[1].Obj
