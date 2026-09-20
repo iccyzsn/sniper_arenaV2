@@ -1,31 +1,22 @@
---!nocheck
---[[
-    DEX REContinued — Telegram Export Extension
-    -------------------------------------------
-    Right-click any instance in DEX → "Send to Telegram".
-    Or use the small floating panel to Pick from World / Send current selection.
-
-    SETUP:
-      1. Create a bot with @BotFather  -> get BOT TOKEN
-      2. Get your chat id: message @userinfobot -> it replies with your id
-      3. Fill CONFIG.BotToken / CONFIG.ChatId below
-      4. Run this AFTER DEX REContinued has loaded
-]]
-
 
 local CONFIG = {
-    BotToken = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo",            -- "123456789:AAaaAAaa..."
-    ChatId   = "5798404109",            -- "123456789" or "-1001234567890" for groups/channels
-    MaxDepth          = 4,    -- recursion depth when dumping children
-    MaxChildren       = 150,  -- max children dumped per node
-    IncludeScripts    = true, -- dump Lua source if instance is a script
-    IncludeHidden     = true, -- include hidden properties (gethiddenproperty)
+    BotToken = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo",
+    ChatId   = "5798404109",
+    MaxDepth          = 4,     -- recursion depth when dumping name-only children tree
+    MaxChildren       = 150,   -- max children shown per node in the tree
+    IncludeScripts    = true,  -- dump Lua source if instance is a script
+    IncludeHidden     = true,  -- include hidden properties (gethiddenproperty)
     IncludeAttributes = true,
     IncludeTags       = true,
-    IncludeChildTree  = true,
+    IncludeChildTree  = true,  -- name-only tree (only used in shallow mode)
     MaxPropsPerInst   = 40,
-    ChunkSize         = 3800, -- TG limit is 4096, leave headroom
+    ChunkSize         = 3800,  -- TG limit is 4096, leave headroom
     Silent            = false,
+
+    -- [NEW] Deep mode settings
+    MaxDeepCount    = 400,     -- hard cap on how many instances get dumped in deep mode
+    DeepPauseEvery  = 5,       -- task.wait() every N instances (yields, keeps game alive)
+    DeepIncludeTree = false,   -- also print name-only tree per node in deep mode
 }
 
 -- ============================================================
@@ -44,11 +35,11 @@ if not httpRequest then
     warn("[TG-Export] No HTTP request function on this executor.")
 end
 
-local HttpService      = cloneref and cloneref(game:GetService("HttpService"))      or game:GetService("HttpService")
-local UserInputService = cloneref and cloneref(game:GetService("UserInputService")) or game:GetService("UserInputService")
-local Players          = cloneref and cloneref(game:GetService("Players"))          or game:GetService("Players")
-local CollectionService= cloneref and cloneref(game:GetService("CollectionService"))or game:GetService("CollectionService")
-local RunService       = cloneref and cloneref(game:GetService("RunService"))       or game:GetService("RunService")
+local HttpService       = cloneref and cloneref(game:GetService("HttpService"))       or game:GetService("HttpService")
+local UserInputService  = cloneref and cloneref(game:GetService("UserInputService"))  or game:GetService("UserInputService")
+local Players           = cloneref and cloneref(game:GetService("Players"))           or game:GetService("Players")
+local CollectionService = cloneref and cloneref(game:GetService("CollectionService")) or game:GetService("CollectionService")
+local RunService        = cloneref and cloneref(game:GetService("RunService"))        or game:GetService("RunService")
 
 -- ============================================================
 -- Helpers
@@ -148,30 +139,26 @@ local COMMON_PROPS = {
 
 local function collectProperties(inst, maxProps)
     local out, count, used = {}, 0, {}
-    local hiddenProps = {}
-    if CONFIG.IncludeHidden and gethiddenproperty then
-        -- nothing to enumerate upfront; we try per prop
-    end
 
     -- Try getproperties if executor supports it
     if getproperties then
         local ok, props = pcall(getproperties, inst)
         if ok and type(props) == "table" then
             local keys = {}
-            for k in pairs(props) do keys[#keys+1] = k end
-            table.sort(keys)
+            for k in pairs(props) do if type(k) == "string" then keys[#keys+1] = k end end
+            pcall(table.sort, keys)
             for _, k in ipairs(keys) do
                 if count >= maxProps then break end
                 if not used[k] then
                     used[k] = true
-                    local v = props[k]
-                    if typeof(v) ~= "function" then
+                    local vok, v = pcall(function() return props[k] end)
+                    if vok and v ~= nil and typeof(v) ~= "function" then
                         count = count + 1
                         out[#out+1] = { name = k, value = v }
                     end
                 end
             end
-            return out
+            if count > 0 then return out end
         end
     end
 
@@ -282,7 +269,7 @@ local function buildInstanceChunk(inst)
         end
     end
 
-    -- Children tree
+    -- Children tree (shallow mode only)
     if CONFIG.IncludeChildTree then
         local tree = childrenTree(inst, 1, CONFIG.MaxDepth, CONFIG.MaxChildren, "")
         local count = #inst:GetChildren()
@@ -294,7 +281,72 @@ local function buildInstanceChunk(inst)
     -- Script source
     local src = collectSource(inst)
     if src then
-        -- truncate very large sources so we don't blow up TG
+        if #src > 12000 then
+            src = src:sub(1, 12000) .. "\n\n-- …truncated (" .. (#src - 12000) .. " more chars)"
+        end
+        parts[#parts+1] = "<b>📜 Script Source</b>\n<pre>" .. esc(src) .. "</pre>"
+    end
+
+    return table.concat(parts, "\n\n")
+end
+
+-- ============================================================
+-- [NEW] Deep mode — walk the whole subtree, dump each instance
+-- ============================================================
+local function collectAllDescendants(root, out, cap)
+    local queue = { root }
+    local head = 1
+    while head <= #queue do
+        local cur = queue[head]; head = head + 1
+        out[#out+1] = cur
+        if #out >= cap then return end
+        local kids = cur:GetChildren()
+        for i = 1, #kids do queue[#queue+1] = kids[i] end
+    end
+end
+
+-- Same layout as buildInstanceChunk, but WITHOUT the giant name-only children
+-- tree (each child gets its own block in deep mode)
+local function buildInstanceChunkFlat(inst)
+    local parts = {}
+    parts[#parts+1] = "<b>📦 " .. esc(inst.ClassName) .. "</b>  <code>" .. esc(inst.Name) .. "</code>"
+    parts[#parts+1] = "<i>Path:</i>\n<code>" .. esc(getPath(inst)) .. "</code>"
+
+    local childCount = #inst:GetChildren()
+    if childCount > 0 then
+        parts[#parts+1] = "<i>Children:</i> " .. childCount
+    end
+
+    local props = collectProperties(inst, CONFIG.MaxPropsPerInst)
+    if #props > 0 then
+        local lines = {}
+        for _, p in ipairs(props) do lines[#lines+1] = p.name .. " = " .. valToStr(p.value) end
+        parts[#parts+1] = "<b>🔑 Properties (" .. #props .. ")</b>\n<pre>" .. esc(table.concat(lines, "\n")) .. "</pre>"
+    end
+
+    if CONFIG.IncludeAttributes then
+        local attrs = collectAttributes(inst)
+        if #attrs > 0 then
+            local lines = {}
+            for _, a in ipairs(attrs) do lines[#lines+1] = a.name .. " = " .. valToStr(a.value) end
+            parts[#parts+1] = "<b>🏷️ Attributes (" .. #attrs .. ")</b>\n<pre>" .. esc(table.concat(lines, "\n")) .. "</pre>"
+        end
+    end
+
+    if CONFIG.IncludeTags then
+        local tags = collectTags(inst)
+        if #tags > 0 then
+            parts[#parts+1] = "<b>🔖 Tags</b>\n<code>" .. esc(table.concat(tags, ", ")) .. "</code>"
+        end
+    end
+
+    if CONFIG.DeepIncludeTree and childCount > 0 then
+        local tree = childrenTree(inst, 1, CONFIG.MaxDepth, CONFIG.MaxChildren, "")
+        parts[#parts+1] = "<b>🌲 Tree</b>\n<pre>" .. esc(tree) .. "</pre>"
+    end
+
+    local src = collectSource(inst)
+    if src then
         if #src > 12000 then
             src = src:sub(1, 12000) .. "\n\n-- …truncated (" .. (#src - 12000) .. " more chars)"
         end
@@ -368,7 +420,7 @@ local function sendChunked(fullText)
             warn("[TG-Export] Failed chunk " .. i .. ": " .. tostring(err))
             return false, err
         end
-        if i < total then task.wait(0.35) end -- rate-limit friendly
+        if i < total then task.wait(0.9) end -- rate-limit friendly (raised for deep mode)
     end
     return true
 end
@@ -430,31 +482,103 @@ local function sendInstances(instances)
     end
     toast("[TG-Export] Building dump…")
     task.spawn(function()
-        local chunks = {}
-        local header = "<b>🧩 DEX REContinued Export</b>\n<i>Place:</i> <code>" .. esc(tostring(game.PlaceId)) .. "</code>\n<i>Count:</i> " .. #instances
-        chunks[#chunks+1] = header
-        for i, inst in ipairs(instances) do
-            if typeof(inst) == "Instance" then
-                chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n" .. buildInstanceChunk(inst)
+        local ok, err = pcall(function()
+            local chunks = {}
+            local header = "<b>🧩 DEX REContinued Export</b>\n<i>Place:</i> <code>" ..
+                esc(tostring(game.PlaceId)) .. "</code>\n<i>Count:</i> " .. #instances
+            chunks[#chunks+1] = header
+            for i, inst in ipairs(instances) do
+                if typeof(inst) == "Instance" then
+                    local cok, chunk = pcall(buildInstanceChunk, inst)
+                    if cok then
+                        chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n" .. chunk
+                    else
+                        chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n<b>⚠️ Failed:</b> <pre>" ..
+                            esc(tostring(chunk)) .. "</pre>"
+                    end
+                end
+                if i % 2 == 0 then task.wait() end
             end
-            if i % 2 == 0 then task.wait() end
-        end
-        local full = table.concat(chunks, "\n\n")
-        local ok, err = sendChunked(full)
+            local full = table.concat(chunks, "\n\n")
+            local sok, serr = sendChunked(full)
+            if not sok then error(serr) end
+        end)
         if ok then
             if not CONFIG.Silent then
                 toast("[TG-Export] Sent " .. #instances .. " instance(s).")
             end
         else
             toast("[TG-Export] Failed: " .. tostring(err), true)
+            warn("[TG-Export] " .. tostring(err))
         end
     end)
 end
 
-_G.SendInstanceToTelegram = sendInstances
+-- ============================================================
+-- [NEW] Deep send — every descendant gets its own full HTML block
+-- ============================================================
+local function sendInstancesDeep(instances)
+    if type(instances) ~= "table" or #instances == 0 then
+        toast("[TG-Export] Nothing selected.", true)
+        return
+    end
+    toast("[TG-Export] Building deep dump…")
+    task.spawn(function()
+        local ok, err = pcall(function()
+            local flat = {}
+            local cap  = CONFIG.MaxDeepCount or 400
+            for _, inst in ipairs(instances) do
+                if typeof(inst) == "Instance" then
+                    collectAllDescendants(inst, flat, cap)
+                end
+                if #flat >= cap then break end
+            end
+
+            local truncated = (#flat >= cap)
+
+            local chunks = {}
+            chunks[#chunks+1] = table.concat({
+                "<b>🧩 DEX REContinued Export — DEEP</b>",
+                "<i>Place:</i> <code>" .. esc(tostring(game.PlaceId)) .. "</code>",
+                "<i>Roots:</i> " .. #instances,
+                "<i>Total instances:</i> " .. #flat .. (truncated and " <i>(capped at "..cap..")</i>" or ""),
+            }, "\n")
+
+            local pauseEvery = CONFIG.DeepPauseEvery or 5
+            for i, inst in ipairs(flat) do
+                local cok, chunk = pcall(buildInstanceChunkFlat, inst)
+                if cok then
+                    chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n" .. chunk
+                else
+                    chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n<b>⚠️ Failed to dump:</b> <pre>" ..
+                        esc(tostring(chunk)) .. "</pre>"
+                end
+                if i % pauseEvery == 0 then task.wait() end
+            end
+
+            if truncated then
+                chunks[#chunks+1] = "<i>⚠️ Output capped at " .. cap ..
+                    " instances. Increase CONFIG.MaxDeepCount to send more.</i>"
+            end
+
+            local full = table.concat(chunks, "\n\n")
+            local sok, serr = sendChunked(full)
+            if not sok then error(serr) end
+        end)
+        if ok then
+            if not CONFIG.Silent then toast("[TG-Export] ✔ Deep dump sent.") end
+        else
+            toast("[TG-Export] ❌ Deep failed: " .. tostring(err), true)
+            warn("[TG-Export] " .. tostring(err))
+        end
+    end)
+end
+
+_G.SendInstanceToTelegram     = sendInstances
+_G.SendInstanceToTelegramDeep = sendInstancesDeep
 
 -- ============================================================
--- DEX hook — find Explorer table and inject context menu item
+-- DEX hook — find Explorer table and inject context menu items
 -- ============================================================
 local function findExplorerTable()
     local getgc = getgc or get_gc_objects
@@ -486,38 +610,61 @@ local function hookDEX()
     local ctx = rawget(Explorer, "RightClickContext")
     if not ctx then return false, "No RightClickContext" end
 
-    local function onClick()
+    local ICON = "rbxassetid://113955252013201"
+
+    local function getSelectedObjs()
         local sList = Explorer.Selection.List
         local objs = {}
         for i = 1, #sList do
             local node = sList[i]
             if node and node.Obj then objs[#objs+1] = node.Obj end
         end
-        sendInstances(objs)
+        return objs
     end
 
-    -- Register our custom item
+    local function onClick()
+        sendInstances(getSelectedObjs())
+    end
+
+    local function onClickDeep()
+        sendInstancesDeep(getSelectedObjs())
+    end
+
+    -- Register both custom items
     pcall(function()
         ctx:Register("SEND_TO_TG", {
             Name = "Send to Telegram",
-            Icon = "rbxassetid://113955252013201", -- paper-plane-ish; swap for anything you like
+            Icon = ICON,
             OnClick = onClick,
+        })
+        ctx:Register("SEND_TO_TG_DEEP", {
+            Name = "Send to Telegram (Deep)",
+            Icon = ICON,
+            OnClick = onClickDeep,
         })
     end)
 
-    -- Hook Show so our item is re-added after ShowRightClick clears the menu
+    -- Hook Show so items are re-added after ShowRightClick clears the menu
     if not rawget(ctx, "__dextg_hooked") then
         rawset(ctx, "__dextg_hooked", true)
-        local oldShow = ctx.Show  -- resolved from metatable on first read
+        local oldShow = ctx.Show
         ctx.Show = function(self, x, y)
             if not self.Registered or not self.Registered["SEND_TO_TG"] then
                 self:Register("SEND_TO_TG", {
                     Name = "Send to Telegram",
-                    Icon = "rbxassetid://113955252013201",
+                    Icon = ICON,
                     OnClick = onClick,
                 })
             end
+            if not self.Registered or not self.Registered["SEND_TO_TG_DEEP"] then
+                self:Register("SEND_TO_TG_DEEP", {
+                    Name = "Send to Telegram (Deep)",
+                    Icon = ICON,
+                    OnClick = onClickDeep,
+                })
+            end
             self:AddRegistered("SEND_TO_TG")
+            self:AddRegistered("SEND_TO_TG_DEEP")
             return oldShow(self, x, y)
         end
     end
@@ -538,8 +685,8 @@ local function buildFallbackPanel()
     if syn and syn.protect_gui then pcall(syn.protect_gui, sg) end
 
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 240, 0, 120)
-    frame.Position = UDim2.new(0, 20, 0.5, -60)
+    frame.Size = UDim2.new(0, 240, 0, 176)                -- [CHANGED] taller for extra buttons
+    frame.Position = UDim2.new(0, 20, 0.5, -88)
     frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
     frame.BorderSizePixel = 0
     frame.Active = true
@@ -609,7 +756,6 @@ local function buildFallbackPanel()
     end)
 
     mkBtn("Send DEX selection", 58, function()
-        -- Try to pull from the DEX Explorer table if found
         local Explorer = findExplorerTable()
         if Explorer and Explorer.Selection and Explorer.Selection.List then
             local objs = {}
@@ -625,6 +771,25 @@ local function buildFallbackPanel()
 
     mkBtn("Send Workspace", 86, function()
         sendInstances({ workspace })
+    end)
+
+    -- [NEW] deep buttons
+    mkBtn("Send DEX selection (Deep)", 114, function()
+        local Explorer = findExplorerTable()
+        if Explorer and Explorer.Selection and Explorer.Selection.List then
+            local objs = {}
+            for i = 1, #Explorer.Selection.List do
+                local n = Explorer.Selection.List[i]
+                if n and n.Obj then objs[#objs+1] = n.Obj end
+            end
+            sendInstancesDeep(objs)
+        else
+            toast("[TG-Export] Could not read DEX selection.", true)
+        end
+    end)
+
+    mkBtn("Send Workspace (Deep)", 142, function()
+        sendInstancesDeep({ workspace })
     end)
 end
 
@@ -644,6 +809,5 @@ task.spawn(function()
         warn("[TG-Export] DEX hook failed: " .. tostring(explorerOrErr))
     end
 
-    -- Always show the fallback panel so there's something usable
     buildFallbackPanel()
 end)
