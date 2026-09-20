@@ -1,3 +1,21 @@
+--!nocheck
+--[[
+    DEX REContinued — Telegram Export Extension
+    -------------------------------------------
+    Right-click any instance in DEX →
+        • "Send to Telegram"        — the instance + name-only children tree
+        • "Send to Telegram (Deep)" — every descendant, each with its own full
+                                       Properties / Attributes / Tags / Script block
+
+    Or use the floating panel for quick actions.
+
+    SETUP:
+      1. Create a bot with @BotFather  -> get BOT TOKEN
+      2. Get your chat id: message @userinfobot -> it replies with your id
+      3. Fill CONFIG.BotToken / CONFIG.ChatId below
+      4. Run this AFTER DEX REContinued has loaded
+]]
+
 
 local CONFIG = {
     BotToken = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo",
@@ -379,6 +397,59 @@ local function chunkMessage(msg, max)
     return chunks
 end
 
+-- Strips bytes that break Roblox's JSONEncode: null bytes, invalid UTF-8, 
+-- and C0/C1 control chars. Keeps \n, \r, \t, and any valid UTF-8 sequence.
+local function sanitizeForJson(s)
+    if type(s) ~= "string" then s = tostring(s) end
+    
+    -- 1. Strip invalid C0 control characters (except \t \n \r) and DEL (127)
+    s = s:gsub("[%z\1-\8\11\12\14-\31\127]", "")
+    
+    -- 2. Strip invalid UTF-8 byte sequences using a byte-level state machine
+    local bytes = {string.byte(s, 1, #s)}
+    local result = {}
+    local i = 1
+    local len = #bytes
+    
+    while i <= len do
+        local b1 = bytes[i]
+        if b1 < 128 then
+            table.insert(result, string.char(b1))
+            i = i + 1
+        elseif b1 >= 194 and b1 <= 223 then
+            if i + 1 <= len and bytes[i+1] >= 128 and bytes[i+1] <= 191 then
+                table.insert(result, string.char(b1, bytes[i+1]))
+                i = i + 2
+            else i = i + 1 end
+        elseif b1 >= 224 and b1 <= 239 then
+            if i + 2 <= len and bytes[i+1] >= 128 and bytes[i+1] <= 191 and bytes[i+2] >= 128 and bytes[i+2] <= 191 then
+                table.insert(result, string.char(b1, bytes[i+1], bytes[i+2]))
+                i = i + 3
+            else i = i + 1 end
+        elseif b1 >= 240 and b1 <= 244 then
+            if i + 3 <= len and bytes[i+1] >= 128 and bytes[i+1] <= 191 and bytes[i+2] >= 128 and bytes[i+2] <= 191 and bytes[i+3] >= 128 and bytes[i+3] <= 191 then
+                table.insert(result, string.char(b1, bytes[i+1], bytes[i+2], bytes[i+3]))
+                i = i + 4
+            else i = i + 1 end
+        else
+            i = i + 1
+        end
+    end
+    
+    return table.concat(result)
+end
+
+-- Manual JSON string escaping (used as fallback if JSONEncode errors out)
+local function jsonEscape(s)
+    s = sanitizeForJson(s)
+    s = s:gsub('\\', '\\\\')
+    s = s:gsub('"', '\\"')
+    s = s:gsub('\n', '\\n')
+    s = s:gsub('\r', '\\r')
+    s = s:gsub('\t', '\\t')
+    return s
+end
+
 local function tgSend(text)
     if not CONFIG.BotToken or CONFIG.BotToken == "" then
         return false, "BotToken is empty"
@@ -387,13 +458,31 @@ local function tgSend(text)
         return false, "ChatId is empty"
     end
 
+    -- Pre-sanitize text to ensure it doesn't break JSONEncode
+    text = sanitizeForJson(text)
+
     local url = "https://api.telegram.org/bot" .. CONFIG.BotToken .. "/sendMessage"
-    local body = HttpService:JSONEncode({
+    local body
+    local okEnc, encoded = pcall(HttpService.JSONEncode, HttpService, {
         chat_id = CONFIG.ChatId,
         text = text,
-        parse_mode = "HTML",
+        parse_mode = "HTML", -- Tells Telegram to parse as HTML
         disable_web_page_preview = true,
     })
+    
+    if okEnc and type(encoded) == "string" then
+        body = encoded
+    else
+        warn("[TG-Export] JSONEncode failed, using manual fallback: " .. tostring(encoded))
+        local chatIdStr = tostring(CONFIG.ChatId)
+        local chatIdJson = chatIdStr:match("^%-?%d+$") and chatIdStr or ('"' .. jsonEscape(chatIdStr) .. '"')
+        body = string.format(
+            '{"chat_id":%s,"text":"%s","parse_mode":"HTML","disable_web_page_preview":true}',
+            chatIdJson,
+            jsonEscape(text)
+        )
+    end
+
     local ok, res = pcall(httpRequest, {
         Url = url,
         Method = "POST",
