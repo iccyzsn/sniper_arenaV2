@@ -1,13 +1,15 @@
 --!nocheck
 --[[
-    DEX REContinued — Telegram Export Extension (HTML File Edition)
-    --------------------------------------------------------------
-    Right-click any instance in DEX →
-        • "Send to Telegram"        — compiles a single .html file and uploads it
-        • "Send to Telegram (Deep)" — same, but for every descendant
+    DEX REContinued — Telegram Export Extension (Ultimate HTML Edition)
+    ------------------------------------------------------------------
+    Right-click any instance/folder in DEX → "Send to Telegram (HTML)"
+    - Automatically gets ALL items inside the selection (deep).
+    - Compiles a beautifully styled .html file with paths, properties, 
+      attributes, tags, and scripts.
+    - Uploads the single .html file to your Telegram chat.
 
     SETUP:
-      1. Create a bot with @BotFather  -> get BOT TOKEN
+      1. Create a bot with @BotFather -> get BOT TOKEN
       2. Get your chat id: message @userinfobot -> it replies with your id
       3. Fill CONFIG.BotToken / CONFIG.ChatId below
       4. Run this AFTER DEX REContinued has loaded
@@ -16,33 +18,24 @@
 local CONFIG = {
     BotToken = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo",
     ChatId   = "5798404109",
-    MaxDepth          = 4,     -- recursion depth when dumping name-only children tree
-    MaxChildren       = 150,   -- max children shown per node in the tree
+    
     IncludeScripts    = true,  -- dump Lua source if instance is a script
-    IncludeHidden     = true,  -- include hidden properties (gethiddenproperty)
+    IncludeHidden     = true,  -- include hidden properties
     IncludeAttributes = true,
     IncludeTags       = true,
-    IncludeChildTree  = true,  -- name-only tree (only used in shallow mode)
-    MaxPropsPerInst   = 40,
+    MaxPropsPerInst   = 60,    -- max properties to list per item
+    MaxDeepCount      = 5000,  -- hard cap on how many items to get (safety)
+    DeepPauseEvery    = 20,    -- yield every N items to prevent crash
     Silent            = false,
-
-    -- Deep mode settings
-    MaxDeepCount    = 400,     -- hard cap on how many instances get dumped in deep mode
-    DeepPauseEvery  = 5,       -- task.wait() every N instances (yields, keeps game alive)
-    DeepIncludeTree = false,   -- also print name-only tree per node in deep mode
 }
 
 -- ============================================================
 -- Executor HTTP
 -- ============================================================
 local httpRequest =
-    (syn and syn.request)
-    or (http and http.request)
-    or http_request
-    or request
-    or (fluxus and fluxus.request)
-    or (krnl and krnl.request)
-    or (request == nil and (function() return nil end))
+    (syn and syn.request) or (http and http.request) or http_request or request or
+    (fluxus and fluxus.request) or (krnl and krnl.request) or
+    (request == nil and (function() return nil end))
 
 if not httpRequest then
     warn("[TG-Export] No HTTP request function on this executor.")
@@ -72,6 +65,10 @@ local function valToStr(v)
         return string.format("Vector3(%g, %g, %g)", v.X, v.Y, v.Z)
     elseif t == "Vector2" then
         return string.format("Vector2(%g, %g)", v.X, v.Y)
+    elseif t == "UDim2" then
+        return string.format("UDim2(%d, %d, %d, %d)", v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset)
+    elseif t == "BrickColor" then
+        return "BrickColor.new(\"" .. v.Name .. "\")"
     end
     return tostring(v)
 end
@@ -105,7 +102,7 @@ local function getPath(obj)
 end
 
 -- ============================================================
--- Property / attribute / tag collectors
+-- Property Collectors
 -- ============================================================
 local COMMON_PROPS = {
     "Name","ClassName","Archivable","Position","CFrame","Size","Rotation","Orientation",
@@ -187,93 +184,6 @@ local function collectSource(inst)
     return nil
 end
 
-local function childrenTree(inst, depth, maxDepth, maxChildren, prefix)
-    if depth > maxDepth then return "" end
-    local children = inst:GetChildren()
-    local n = #children
-    local shown = math.min(n, maxChildren)
-    local lines = {}
-    for i = 1, shown do
-        local c = children[i]
-        local last = (i == shown and n <= maxChildren)
-        local branch = last and "└── " or "├── "
-        lines[#lines+1] = prefix .. branch .. c.Name .. "  [" .. c.ClassName .. "]"
-        local np = prefix .. (last and "    " or "│   ")
-        local sub = childrenTree(c, depth+1, maxDepth, maxChildren, np)
-        if sub ~= "" then lines[#lines+1] = sub end
-    end
-    if n > maxChildren then
-        lines[#lines+1] = prefix .. "└── … " .. (n - maxChildren) .. " more"
-    end
-    return table.concat(lines, "\n")
-end
-
--- ============================================================
--- HTML Builders
--- ============================================================
-local function buildInstanceHtml(inst, isDeep)
-    local parts = {}
-    parts[#parts+1] = string.format(
-        '<div class="instance"><div class="header"><b>%s</b> <span>"%s"</span></div>', 
-        esc(inst.ClassName), esc(inst.Name)
-    )
-    parts[#parts+1] = string.format('<div class="path">Path: %s</div>', esc(getPath(inst)))
-    
-    if not isDeep and CONFIG.IncludeChildTree then
-        local tree = childrenTree(inst, 1, CONFIG.MaxDepth, CONFIG.MaxChildren, "")
-        local count = #inst:GetChildren()
-        if count > 0 then
-            parts[#parts+1] = string.format(
-                '<div class="section"><h3>Children (%d)</h3><pre>%s</pre></div>', 
-                count, esc(tree)
-            )
-        end
-    elseif isDeep then
-        local count = #inst:GetChildren()
-        if count > 0 then
-            parts[#parts+1] = string.format('<div class="section"><i>Children Count: %d</i></div>', count)
-        end
-    end
-    
-    local props = collectProperties(inst, CONFIG.MaxPropsPerInst)
-    if #props > 0 then
-        local rows = {}
-        for _, p in ipairs(props) do
-            rows[#rows+1] = string.format('<tr><td>%s</td><td>%s</td></tr>', esc(p.name), esc(valToStr(p.value)))
-        end
-        parts[#parts+1] = string.format('<div class="section"><h3>Properties (%d)</h3><table>%s</table></div>', #props, table.concat(rows, ""))
-    end
-
-    if CONFIG.IncludeAttributes then
-        local attrs = collectAttributes(inst)
-        if #attrs > 0 then
-            local rows = {}
-            for _, a in ipairs(attrs) do
-                rows[#rows+1] = string.format('<tr><td>%s</td><td>%s</td></tr>', esc(a.name), esc(valToStr(a.value)))
-            end
-            parts[#parts+1] = string.format('<div class="section"><h3>Attributes (%d)</h3><table>%s</table></div>', #attrs, table.concat(rows, ""))
-        end
-    end
-
-    if CONFIG.IncludeTags then
-        local tags = collectTags(inst)
-        if #tags > 0 then
-            parts[#parts+1] = string.format('<div class="section"><h3>Tags</h3><code>%s</code></div>', esc(table.concat(tags, ", ")))
-        end
-    end
-
-    local src = collectSource(inst)
-    if src then
-        if #src > 12000 then
-            src = src:sub(1, 12000) .. "\n\n-- …truncated (" .. (#src - 12000) .. " more chars)"
-        end
-        parts[#parts+1] = string.format('<div class="section"><h3>Script Source</h3><pre>%s</pre></div>', esc(src))
-    end
-    
-    parts[#parts+1] = '</div>'
-    return table.concat(parts, "\n")
-end
-
 local function collectAllDescendants(root, out, cap)
     local queue = { root }
     local head = 1
@@ -286,70 +196,119 @@ local function collectAllDescendants(root, out, cap)
     end
 end
 
-local function compileHtmlFile(instances, isDeep)
+-- ============================================================
+-- HTML Builders
+-- ============================================================
+local function buildInstanceHtml(inst)
+    local parts = {}
+    parts[#parts+1] = '<div class="instance">'
+    parts[#parts+1] = string.format(
+        '<div class="header"><span class="icon">📦</span> <span class="cls">%s</span> <span class="nm">"%s"</span></div>', 
+        esc(inst.ClassName), esc(inst.Name)
+    )
+    parts[#parts+1] = string.format('<div class="path">🛤️ %s</div>', esc(getPath(inst)))
+    
+    local props = collectProperties(inst, CONFIG.MaxPropsPerInst)
+    if #props > 0 then
+        local rows = {}
+        for _, p in ipairs(props) do
+            rows[#rows+1] = string.format('<tr><td class="pn">%s</td><td class="pv">%s</td></tr>', esc(p.name), esc(valToStr(p.value)))
+        end
+        parts[#parts+1] = string.format('<details class="section" open><summary>⚙️ Properties (%d)</summary><table><tbody>%s</tbody></table></details>', #props, table.concat(rows, ""))
+    end
+
+    if CONFIG.IncludeAttributes then
+        local attrs = collectAttributes(inst)
+        if #attrs > 0 then
+            local rows = {}
+            for _, a in ipairs(attrs) do
+                rows[#rows+1] = string.format('<tr><td class="pn">%s</td><td class="pv">%s</td></tr>', esc(a.name), esc(valToStr(a.value)))
+            end
+            parts[#parts+1] = string.format('<details class="section"><summary>🏷️ Attributes (%d)</summary><table><tbody>%s</tbody></table></details>', #attrs, table.concat(rows, ""))
+        end
+    end
+
+    if CONFIG.IncludeTags then
+        local tags = collectTags(inst)
+        if #tags > 0 then
+            parts[#parts+1] = string.format('<details class="section"><summary>🔖 Tags (%d)</summary><div class="tags-box">%s</div></details>', #tags, esc(table.concat(tags, " · ")))
+        end
+    end
+
+    local src = collectSource(inst)
+    if src then
+        if #src > 15000 then
+            src = src:sub(1, 15000) .. "\n\n-- …truncated (" .. (#src - 15000) .. " more chars)"
+        end
+        parts[#parts+1] = string.format('<details class="section"><summary>📜 Script Source</summary><pre><code>%s</code></pre></details>', esc(src))
+    end
+    
+    parts[#parts+1] = '</div>'
+    return table.concat(parts, "\n")
+end
+
+local function compileHtmlFile(instances)
     local htmlParts = {}
     htmlParts[#htmlParts+1] = [[
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>DEX Export</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEX Explorer Export</title>
 <style>
-  body { font-family: Consolas, 'Courier New', monospace; background: #1e1e1e; color: #d4d4d4; margin: 0; padding: 20px; }
-  h1 { color: #ffffff; border-bottom: 1px solid #333; padding-bottom: 10px; margin-top: 0; }
-  .meta { color: #888; margin-bottom: 20px; font-size: 14px; }
-  .instance { margin-bottom: 15px; border: 1px solid #3c3c3c; border-radius: 4px; background: #252526; overflow: hidden; }
-  .header { background: #2d2d2d; padding: 8px 12px; border-bottom: 1px solid #3c3c3c; font-size: 16px; }
-  .header b { color: #4ec9b0; }
-  .header span { color: #ce9178; }
-  .path { padding: 6px 12px; color: #dcdcaa; border-bottom: 1px solid #2d2d2d; font-size: 12px; }
-  .section { padding: 10px 12px; border-top: 1px solid #2d2d2d; }
-  .section h3 { margin: 0 0 8px 0; color: #c586c0; font-size: 13px; text-transform: uppercase; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 4px 12px; border-bottom: 1px solid #2d2d2d; vertical-align: top; }
-  td:first-child { color: #9cdcfe; width: 35%; }
-  td:last-child { color: #ce9178; }
-  pre { background: #1e1e1e; border: 1px solid #3c3c3c; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 12px; max-height: 600px; overflow-y: auto; }
-  code { color: #b5cea8; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; margin: 0; padding: 24px; }
+  h1 { color: #fff; font-size: 24px; border-bottom: 2px solid #007acc; padding-bottom: 16px; margin-top: 0; }
+  .meta { background: #1a1a1a; padding: 16px; border-radius: 8px; margin-bottom: 24px; border: 1px solid #333; font-size: 14px; }
+  .meta span { color: #4ec9b0; font-weight: bold; }
+  .container { display: grid; grid-template-columns: repeat(auto-fill, minmax(450px, 1fr)); gap: 16px; }
+  .instance { background: #1e1e1e; border: 1px solid #333; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+  .header { background: #252526; padding: 12px 16px; border-bottom: 1px solid #333; font-size: 15px; }
+  .header .icon { margin-right: 5px; }
+  .header .cls { color: #4ec9b0; font-weight: 600; }
+  .header .nm { color: #ce9178; }
+  .path { background: #181818; padding: 8px 16px; color: #569cd6; font-family: 'Consolas', monospace; font-size: 12px; border-bottom: 1px solid #2a2a2a; word-break: break-all; }
+  .section { padding: 8px 16px; border-top: 1px solid #2a2a2a; }
+  .section summary { cursor: pointer; color: #c586c0; font-size: 13px; font-weight: 600; padding: 8px 0; outline: none; user-select: none; }
+  .section summary:hover { color: #dcdcaa; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+  tr { border-bottom: 1px solid #2a2a2a; }
+  tr:last-child { border-bottom: none; }
+  td { padding: 8px 0; vertical-align: top; }
+  td.pn { color: #9cdcfe; width: 35%; padding-right: 12px; }
+  td.pv { color: #dcdcaa; word-break: break-all; }
+  pre { background: #181818; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto; max-height: 400px; border: 1px solid #333; }
+  pre code { font-family: 'Consolas', monospace; color: #d4d4d4; }
+  .tags-box { padding: 8px 0; color: #b5cea8; font-style: italic; }
 </style>
 </head>
 <body>
     ]]
     
-    local modeStr = isDeep and "Deep" or "Shallow"
     htmlParts[#htmlParts+1] = string.format(
-        '<h1>🧩 DEX Explorer Export</h1><div class="meta">Place ID: %s | Mode: %s | Roots: %d</div>', 
-        tostring(game.PlaceId), modeStr, #instances
+        '<h1>🧩 DEX Explorer Dump</h1><div class="meta"><strong>Place ID:</strong> <span>%s</span><br><strong>Root Items:</strong> <span>%d</span></div><div class="container">', 
+        tostring(game.PlaceId), #instances
     )
 
-    if isDeep then
-        local flat = {}
-        local cap = CONFIG.MaxDeepCount or 400
-        for _, inst in ipairs(instances) do
-            if typeof(inst) == "Instance" then
-                collectAllDescendants(inst, flat, cap)
-            end
-            if #flat >= cap then break end
+    local flat = {}
+    local cap = CONFIG.MaxDeepCount or 5000
+    for _, inst in ipairs(instances) do
+        if typeof(inst) == "Instance" then
+            collectAllDescendants(inst, flat, cap)
         end
-        
-        htmlParts[#htmlParts+1] = string.format('<div class="meta">Total Descendants Dumped: %d</div>', #flat)
-        
-        for i, inst in ipairs(flat) do
-            local cok, html = pcall(buildInstanceHtml, inst, true)
-            if cok then htmlParts[#htmlParts+1] = html end
-            if i % CONFIG.DeepPauseEvery == 0 then task.wait() end
-        end
-    else
-        for i, inst in ipairs(instances) do
-            if typeof(inst) == "Instance" then
-                local cok, html = pcall(buildInstanceHtml, inst, false)
-                if cok then htmlParts[#htmlParts+1] = html end
-            end
-            if i % 2 == 0 then task.wait() end
-        end
+        if #flat >= cap then break end
+    end
+    
+    htmlParts[#htmlParts+1] = string.format('<!-- Total Items Dumped: %d -->', #flat)
+
+    for i, inst in ipairs(flat) do
+        local cok, html = pcall(buildInstanceHtml, inst)
+        if cok then htmlParts[#htmlParts+1] = html end
+        if i % CONFIG.DeepPauseEvery == 0 then task.wait() end
     end
 
-    htmlParts[#htmlParts+1] = "</body></html>"
+    htmlParts[#htmlParts+1] = "</div></body></html>"
     return table.concat(htmlParts, "\n")
 end
 
@@ -357,12 +316,8 @@ end
 -- Telegram File Sender
 -- ============================================================
 local function tgSendFile(htmlContent, filename)
-    if not CONFIG.BotToken or CONFIG.BotToken == "" then
-        return false, "BotToken is empty"
-    end
-    if not CONFIG.ChatId or CONFIG.ChatId == "" then
-        return false, "ChatId is empty"
-    end
+    if not CONFIG.BotToken or CONFIG.BotToken == "" then return false, "BotToken is empty" end
+    if not CONFIG.ChatId or CONFIG.ChatId == "" then return false, "ChatId is empty" end
 
     local url = "https://api.telegram.org/bot" .. CONFIG.BotToken .. "/sendDocument"
     local boundary = "----DEXExportBoundary" .. tostring(math.random(10000000, 99999999))
@@ -370,7 +325,6 @@ local function tgSendFile(htmlContent, filename)
     
     local caption = "🧩 DEX Export | Place: " .. tostring(game.PlaceId)
     
-    -- Build multipart/form-data manually
     local body = "--" .. boundary .. CRLF ..
         'Content-Disposition: form-data; name="chat_id"' .. CRLF .. CRLF ..
         tostring(CONFIG.ChatId) .. CRLF ..
@@ -389,9 +343,7 @@ local function tgSendFile(htmlContent, filename)
     local ok, res = pcall(httpRequest, {
         Url = url,
         Method = "POST",
-        Headers = { 
-            ["Content-Type"] = "multipart/form-data; boundary=" .. boundary
-        },
+        Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
         Body = body,
     })
     
@@ -458,16 +410,16 @@ local function sendInstances(instances)
         toast("[TG-Export] Nothing selected.", true)
         return
     end
-    toast("[TG-Export] Compiling HTML file…")
+    toast("[TG-Export] Scanning items & compiling HTML…")
     task.spawn(function()
         local ok, err = pcall(function()
-            local htmlContent = compileHtmlFile(instances, false)
-            local filename = "DEX_Export_" .. tostring(os.time()) .. ".html"
+            local htmlContent = compileHtmlFile(instances)
+            local filename = "DEX_Dump_" .. tostring(os.time()) .. ".html"
             local sok, serr = tgSendFile(htmlContent, filename)
             if not sok then error(serr) end
         end)
         if ok then
-            if not CONFIG.Silent then toast("[TG-Export] ✔ HTML file sent.") end
+            if not CONFIG.Silent then toast("[TG-Export] ✔ HTML file sent to Telegram.") end
         else
             toast("[TG-Export] Failed: " .. tostring(err), true)
             warn("[TG-Export] " .. tostring(err))
@@ -475,33 +427,10 @@ local function sendInstances(instances)
     end)
 end
 
-local function sendInstancesDeep(instances)
-    if type(instances) ~= "table" or #instances == 0 then
-        toast("[TG-Export] Nothing selected.", true)
-        return
-    end
-    toast("[TG-Export] Compiling Deep HTML file…")
-    task.spawn(function()
-        local ok, err = pcall(function()
-            local htmlContent = compileHtmlFile(instances, true)
-            local filename = "DEX_DeepExport_" .. tostring(os.time()) .. ".html"
-            local sok, serr = tgSendFile(htmlContent, filename)
-            if not sok then error(serr) end
-        end)
-        if ok then
-            if not CONFIG.Silent then toast("[TG-Export] ✔ Deep HTML file sent.") end
-        else
-            toast("[TG-Export] ❌ Deep failed: " .. tostring(err), true)
-            warn("[TG-Export] " .. tostring(err))
-        end
-    end)
-end
-
-_G.SendInstanceToTelegram     = sendInstances
-_G.SendInstanceToTelegramDeep = sendInstancesDeep
+_G.SendInstanceToTelegram = sendInstances
 
 -- ============================================================
--- DEX hook — find Explorer table and inject context menu items
+-- DEX hook
 -- ============================================================
 local function findExplorerTable()
     local getgc = getgc or get_gc_objects
@@ -549,11 +478,6 @@ local function hookDEX()
             Icon = ICON,
             OnClick = function() sendInstances(getSelectedObjs()) end,
         })
-        ctx:Register("SEND_TO_TG_DEEP", {
-            Name = "Send to Telegram (Deep HTML)",
-            Icon = ICON,
-            OnClick = function() sendInstancesDeep(getSelectedObjs()) end,
-        })
     end)
 
     if not rawget(ctx, "__dextg_hooked") then
@@ -563,11 +487,7 @@ local function hookDEX()
             if not self.Registered or not self.Registered["SEND_TO_TG"] then
                 self:Register("SEND_TO_TG", { Name = "Send to Telegram (HTML)", Icon = ICON, OnClick = function() sendInstances(getSelectedObjs()) end })
             end
-            if not self.Registered or not self.Registered["SEND_TO_TG_DEEP"] then
-                self:Register("SEND_TO_TG_DEEP", { Name = "Send to Telegram (Deep HTML)", Icon = ICON, OnClick = function() sendInstancesDeep(getSelectedObjs()) end })
-            end
             self:AddRegistered("SEND_TO_TG")
-            self:AddRegistered("SEND_TO_TG_DEEP")
             return oldShow(self, x, y)
         end
     end
@@ -587,8 +507,8 @@ local function buildFallbackPanel()
     if syn and syn.protect_gui then pcall(syn.protect_gui, sg) end
 
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 240, 0, 176)
-    frame.Position = UDim2.new(0, 20, 0.5, -88)
+    frame.Size = UDim2.new(0, 240, 0, 130)
+    frame.Position = UDim2.new(0, 20, 0.5, -65)
     frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
     frame.BorderSizePixel = 0
     frame.Active = true
@@ -622,7 +542,7 @@ local function buildFallbackPanel()
 
     local function mkBtn(text, y, cb)
         local b = Instance.new("TextButton", frame)
-        b.Size = UDim2.new(1, -16, 0, 24)
+        b.Size = UDim2.new(1, -16, 0, 28)
         b.Position = UDim2.new(0, 8, 0, y)
         b.BackgroundColor3 = Color3.fromRGB(45,45,45)
         b.BorderSizePixel = 0
@@ -637,7 +557,7 @@ local function buildFallbackPanel()
         b.MouseButton1Click:Connect(cb)
     end
 
-    mkBtn("Pick from world", 30, function()
+    mkBtn("Pick from world (Deep)", 30, function()
         toast("[TG-Export] Click a part in the world…")
         local conn
         conn = UserInputService.InputBegan:Connect(function(input, gp)
@@ -652,7 +572,7 @@ local function buildFallbackPanel()
         end)
     end)
 
-    mkBtn("Send DEX selection", 58, function()
+    mkBtn("Send DEX selection (Deep)", 66, function()
         local Explorer = findExplorerTable()
         if Explorer and Explorer.Selection and Explorer.Selection.List then
             local objs = {}
@@ -664,21 +584,9 @@ local function buildFallbackPanel()
         else toast("[TG-Export] Could not read DEX selection.", true) end
     end)
 
-    mkBtn("Send Workspace", 86, function() sendInstances({ workspace }) end)
-
-    mkBtn("Send DEX selection (Deep)", 114, function()
-        local Explorer = findExplorerTable()
-        if Explorer and Explorer.Selection and Explorer.Selection.List then
-            local objs = {}
-            for i = 1, #Explorer.Selection.List do
-                local n = Explorer.Selection.List[i]
-                if n and n.Obj then objs[#objs+1] = n.Obj end
-            end
-            sendInstancesDeep(objs)
-        else toast("[TG-Export] Could not read DEX selection.", true) end
+    mkBtn("Send Entire Workspace (Deep)", 102, function() 
+        sendInstances({ workspace }) 
     end)
-
-    mkBtn("Send Workspace (Deep)", 142, function() sendInstancesDeep({ workspace }) end)
 end
 
 -- ============================================================
