@@ -1,13 +1,10 @@
 --!nocheck
 --[[
-    DEX REContinued — Telegram Export Extension
-    -------------------------------------------
+    DEX REContinued — Telegram Export Extension (HTML File Edition)
+    --------------------------------------------------------------
     Right-click any instance in DEX →
-        • "Send to Telegram"        — the instance + name-only children tree
-        • "Send to Telegram (Deep)" — every descendant, each with its own full
-                                       Properties / Attributes / Tags / Script block
-
-    Or use the floating panel for quick actions.
+        • "Send to Telegram"        — compiles a single .html file and uploads it
+        • "Send to Telegram (Deep)" — same, but for every descendant
 
     SETUP:
       1. Create a bot with @BotFather  -> get BOT TOKEN
@@ -15,7 +12,6 @@
       3. Fill CONFIG.BotToken / CONFIG.ChatId below
       4. Run this AFTER DEX REContinued has loaded
 ]]
-
 
 local CONFIG = {
     BotToken = "8305869255:AAEqIdORQUnQgg82LKbVwsj6Rzpfow0tKqo",
@@ -28,10 +24,9 @@ local CONFIG = {
     IncludeTags       = true,
     IncludeChildTree  = true,  -- name-only tree (only used in shallow mode)
     MaxPropsPerInst   = 40,
-    ChunkSize         = 3800,  -- TG limit is 4096, leave headroom
     Silent            = false,
 
-    -- [NEW] Deep mode settings
+    -- Deep mode settings
     MaxDeepCount    = 400,     -- hard cap on how many instances get dumped in deep mode
     DeepPauseEvery  = 5,       -- task.wait() every N instances (yields, keeps game alive)
     DeepIncludeTree = false,   -- also print name-only tree per node in deep mode
@@ -47,7 +42,7 @@ local httpRequest =
     or request
     or (fluxus and fluxus.request)
     or (krnl and krnl.request)
-    or (request == nil and (function() return nil end)) -- placeholder
+    or (request == nil and (function() return nil end))
 
 if not httpRequest then
     warn("[TG-Export] No HTTP request function on this executor.")
@@ -57,7 +52,6 @@ local HttpService       = cloneref and cloneref(game:GetService("HttpService")) 
 local UserInputService  = cloneref and cloneref(game:GetService("UserInputService"))  or game:GetService("UserInputService")
 local Players           = cloneref and cloneref(game:GetService("Players"))           or game:GetService("Players")
 local CollectionService = cloneref and cloneref(game:GetService("CollectionService")) or game:GetService("CollectionService")
-local RunService        = cloneref and cloneref(game:GetService("RunService"))        or game:GetService("RunService")
 
 -- ============================================================
 -- Helpers
@@ -78,16 +72,6 @@ local function valToStr(v)
         return string.format("Vector3(%g, %g, %g)", v.X, v.Y, v.Z)
     elseif t == "Vector2" then
         return string.format("Vector2(%g, %g)", v.X, v.Y)
-    elseif t == "UDim2" then
-        return tostring(v)
-    elseif t == "UDim" then
-        return tostring(v)
-    elseif t == "CFrame" then
-        return tostring(v)
-    elseif t == "EnumItem" then
-        return tostring(v)
-    elseif t == "BrickColor" then
-        return "BrickColor(" .. v.Name .. ")"
     end
     return tostring(v)
 end
@@ -124,41 +108,19 @@ end
 -- Property / attribute / tag collectors
 -- ============================================================
 local COMMON_PROPS = {
-    "Name","ClassName","Archivable",
-    "Position","CFrame","Size","Rotation","Orientation","PivotOffset",
-    "Color","BrickColor","Material","Transparency","Reflectance",
-    "Anchored","CanCollide","CanTouch","CanQuery","Massless","Locked",
-    "Shape","Velocity","AssemblyLinearVelocity","AssemblyAngularVelocity",
-    "Value","Text","Image","Texture","SoundId","MeshId","TextureID",
-    "Enabled","Visible","Active","Modal","AutoButtonColor",
-    "Source","RunContext","Disabled","Enabled",
-    "WalkSpeed","JumpPower","JumpHeight","Health","MaxHealth","HipHeight",
-    "Team","TeamColor","UserId","DisplayName",
-    "Brightness","Ambient","OutdoorAmbient","ClockTime","GlobalShadows",
-    "Firing","Fire","Heat","Velocity",
-    "Density","Friction","Elasticity","FrictionWeight","ElasticityWeight",
-    "Level","Gravity","FogEnd","FogStart","FogColor",
-    "CameraType","CameraSubject","FieldOfView",
-    "TimePosition","Volume","Loop","Playing","PlaybackSpeed",
-    "AutoPlay","PlayOnRemove","RollOffMode",
-    "LocalPlayer","Character","PlayerGui","Backpack","PlayerScripts",
-    "GameId","PlaceId","PlaceVersion","Workspace",
-    "IsStudio","PrivateServerId","CreatorId","CreatorType",
-    "PrimaryPart","WorldPivot","ModelStreamingMode",
-    "AnimationId","Speed","Weight",
-    "CursorIcon","MaxActivationDistance","ActionText","ObjectText",
-    "HoldDuration","KeyboardKeyCode","RequiresLineOfSight","Style",
-    "Adornee","AlwaysOnTop","LightInfluence","MaxDistance","Face",
-    "LineThickness","SurfaceColor3","SurfaceTransparency",
-    "Lifetime","Rate","Speed","Drag","Acceleration","SpreadAngle",
-    "EmissionDirection","Squash","LightEmission","LightInfluence",
-    "Mode","Face","Sizing",
+    "Name","ClassName","Archivable","Position","CFrame","Size","Rotation","Orientation",
+    "Color","BrickColor","Material","Transparency","Reflectance","Anchored","CanCollide",
+    "CanTouch","CanQuery","Massless","Locked","Shape","Velocity","Value","Text","Image",
+    "Texture","SoundId","MeshId","TextureID","Enabled","Visible","Active","Source",
+    "RunContext","Disabled","WalkSpeed","JumpPower","JumpHeight","Health","MaxHealth",
+    "Team","TeamColor","UserId","DisplayName","Brightness","Ambient","CameraType",
+    "FieldOfView","TimePosition","Volume","Loop","Playing","PlaybackSpeed","Character",
+    "PlayerGui","Backpack","PlayerScripts","GameId","PlaceId","PlaceVersion","Workspace",
+    "PrimaryPart","WorldPivot","AnimationId","Speed","Weight"
 }
 
 local function collectProperties(inst, maxProps)
     local out, count, used = {}, 0, {}
-
-    -- Try getproperties if executor supports it
     if getproperties then
         local ok, props = pcall(getproperties, inst)
         if ok and type(props) == "table" then
@@ -180,7 +142,6 @@ local function collectProperties(inst, maxProps)
         end
     end
 
-    -- Fallback: try common list
     for _, k in ipairs(COMMON_PROPS) do
         if count >= maxProps then break end
         if not used[k] then
@@ -203,9 +164,7 @@ local function collectAttributes(inst)
     local out = {}
     local ok, attrs = pcall(function() return inst:GetAttributes() end)
     if ok and type(attrs) == "table" then
-        for k, v in pairs(attrs) do
-            out[#out+1] = { name = k, value = v }
-        end
+        for k, v in pairs(attrs) do out[#out+1] = { name = k, value = v } end
     end
     return out
 end
@@ -228,9 +187,6 @@ local function collectSource(inst)
     return nil
 end
 
--- ============================================================
--- Markdown/HTML builders
--- ============================================================
 local function childrenTree(inst, depth, maxDepth, maxChildren, prefix)
     if depth > maxDepth then return "" end
     local children = inst:GetChildren()
@@ -252,65 +208,72 @@ local function childrenTree(inst, depth, maxDepth, maxChildren, prefix)
     return table.concat(lines, "\n")
 end
 
-local function buildInstanceChunk(inst)
+-- ============================================================
+-- HTML Builders
+-- ============================================================
+local function buildInstanceHtml(inst, isDeep)
     local parts = {}
-    parts[#parts+1] = "<b>📦 " .. esc(inst.ClassName) .. "</b>  <code>" .. esc(inst.Name) .. "</code>"
-    parts[#parts+1] = "<i>Path:</i> <code>" .. esc(getPath(inst)) .. "</code>"
-
-    -- Properties
-    local props = collectProperties(inst, CONFIG.MaxPropsPerInst)
-    if #props > 0 then
-        local lines = {}
-        for _, p in ipairs(props) do
-            lines[#lines+1] = p.name .. " = " .. valToStr(p.value)
-        end
-        parts[#parts+1] = "<b>🔑 Properties (" .. #props .. ")</b>\n<pre>" .. esc(table.concat(lines, "\n")) .. "</pre>"
-    end
-
-    -- Attributes
-    if CONFIG.IncludeAttributes then
-        local attrs = collectAttributes(inst)
-        if #attrs > 0 then
-            local lines = {}
-            for _, a in ipairs(attrs) do
-                lines[#lines+1] = a.name .. " = " .. valToStr(a.value)
-            end
-            parts[#parts+1] = "<b>🏷️ Attributes (" .. #attrs .. ")</b>\n<pre>" .. esc(table.concat(lines, "\n")) .. "</pre>"
-        end
-    end
-
-    -- Tags
-    if CONFIG.IncludeTags then
-        local tags = collectTags(inst)
-        if #tags > 0 then
-            parts[#parts+1] = "<b>🔖 Tags</b>\n<code>" .. esc(table.concat(tags, ", ")) .. "</code>"
-        end
-    end
-
-    -- Children tree (shallow mode only)
-    if CONFIG.IncludeChildTree then
+    parts[#parts+1] = string.format(
+        '<div class="instance"><div class="header"><b>%s</b> <span>"%s"</span></div>', 
+        esc(inst.ClassName), esc(inst.Name)
+    )
+    parts[#parts+1] = string.format('<div class="path">Path: %s</div>', esc(getPath(inst)))
+    
+    if not isDeep and CONFIG.IncludeChildTree then
         local tree = childrenTree(inst, 1, CONFIG.MaxDepth, CONFIG.MaxChildren, "")
         local count = #inst:GetChildren()
         if count > 0 then
-            parts[#parts+1] = "<b>👶 Children (" .. count .. ")</b>\n<pre>" .. esc(tree) .. "</pre>"
+            parts[#parts+1] = string.format(
+                '<div class="section"><h3>Children (%d)</h3><pre>%s</pre></div>', 
+                count, esc(tree)
+            )
+        end
+    elseif isDeep then
+        local count = #inst:GetChildren()
+        if count > 0 then
+            parts[#parts+1] = string.format('<div class="section"><i>Children Count: %d</i></div>', count)
+        end
+    end
+    
+    local props = collectProperties(inst, CONFIG.MaxPropsPerInst)
+    if #props > 0 then
+        local rows = {}
+        for _, p in ipairs(props) do
+            rows[#rows+1] = string.format('<tr><td>%s</td><td>%s</td></tr>', esc(p.name), esc(valToStr(p.value)))
+        end
+        parts[#parts+1] = string.format('<div class="section"><h3>Properties (%d)</h3><table>%s</table></div>', #props, table.concat(rows, ""))
+    end
+
+    if CONFIG.IncludeAttributes then
+        local attrs = collectAttributes(inst)
+        if #attrs > 0 then
+            local rows = {}
+            for _, a in ipairs(attrs) do
+                rows[#rows+1] = string.format('<tr><td>%s</td><td>%s</td></tr>', esc(a.name), esc(valToStr(a.value)))
+            end
+            parts[#parts+1] = string.format('<div class="section"><h3>Attributes (%d)</h3><table>%s</table></div>', #attrs, table.concat(rows, ""))
         end
     end
 
-    -- Script source
+    if CONFIG.IncludeTags then
+        local tags = collectTags(inst)
+        if #tags > 0 then
+            parts[#parts+1] = string.format('<div class="section"><h3>Tags</h3><code>%s</code></div>', esc(table.concat(tags, ", ")))
+        end
+    end
+
     local src = collectSource(inst)
     if src then
         if #src > 12000 then
             src = src:sub(1, 12000) .. "\n\n-- …truncated (" .. (#src - 12000) .. " more chars)"
         end
-        parts[#parts+1] = "<b>📜 Script Source</b>\n<pre>" .. esc(src) .. "</pre>"
+        parts[#parts+1] = string.format('<div class="section"><h3>Script Source</h3><pre>%s</pre></div>', esc(src))
     end
-
-    return table.concat(parts, "\n\n")
+    
+    parts[#parts+1] = '</div>'
+    return table.concat(parts, "\n")
 end
 
--- ============================================================
--- [NEW] Deep mode — walk the whole subtree, dump each instance
--- ============================================================
 local function collectAllDescendants(root, out, cap)
     local queue = { root }
     local head = 1
@@ -323,134 +286,77 @@ local function collectAllDescendants(root, out, cap)
     end
 end
 
--- Same layout as buildInstanceChunk, but WITHOUT the giant name-only children
--- tree (each child gets its own block in deep mode)
-local function buildInstanceChunkFlat(inst)
-    local parts = {}
-    parts[#parts+1] = "<b>📦 " .. esc(inst.ClassName) .. "</b>  <code>" .. esc(inst.Name) .. "</code>"
-    parts[#parts+1] = "<i>Path:</i>\n<code>" .. esc(getPath(inst)) .. "</code>"
+local function compileHtmlFile(instances, isDeep)
+    local htmlParts = {}
+    htmlParts[#htmlParts+1] = [[
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DEX Export</title>
+<style>
+  body { font-family: Consolas, 'Courier New', monospace; background: #1e1e1e; color: #d4d4d4; margin: 0; padding: 20px; }
+  h1 { color: #ffffff; border-bottom: 1px solid #333; padding-bottom: 10px; margin-top: 0; }
+  .meta { color: #888; margin-bottom: 20px; font-size: 14px; }
+  .instance { margin-bottom: 15px; border: 1px solid #3c3c3c; border-radius: 4px; background: #252526; overflow: hidden; }
+  .header { background: #2d2d2d; padding: 8px 12px; border-bottom: 1px solid #3c3c3c; font-size: 16px; }
+  .header b { color: #4ec9b0; }
+  .header span { color: #ce9178; }
+  .path { padding: 6px 12px; color: #dcdcaa; border-bottom: 1px solid #2d2d2d; font-size: 12px; }
+  .section { padding: 10px 12px; border-top: 1px solid #2d2d2d; }
+  .section h3 { margin: 0 0 8px 0; color: #c586c0; font-size: 13px; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 4px 12px; border-bottom: 1px solid #2d2d2d; vertical-align: top; }
+  td:first-child { color: #9cdcfe; width: 35%; }
+  td:last-child { color: #ce9178; }
+  pre { background: #1e1e1e; border: 1px solid #3c3c3c; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 12px; max-height: 600px; overflow-y: auto; }
+  code { color: #b5cea8; }
+</style>
+</head>
+<body>
+    ]]
+    
+    local modeStr = isDeep and "Deep" or "Shallow"
+    htmlParts[#htmlParts+1] = string.format(
+        '<h1>🧩 DEX Explorer Export</h1><div class="meta">Place ID: %s | Mode: %s | Roots: %d</div>', 
+        tostring(game.PlaceId), modeStr, #instances
+    )
 
-    local childCount = #inst:GetChildren()
-    if childCount > 0 then
-        parts[#parts+1] = "<i>Children:</i> " .. childCount
-    end
-
-    local props = collectProperties(inst, CONFIG.MaxPropsPerInst)
-    if #props > 0 then
-        local lines = {}
-        for _, p in ipairs(props) do lines[#lines+1] = p.name .. " = " .. valToStr(p.value) end
-        parts[#parts+1] = "<b>🔑 Properties (" .. #props .. ")</b>\n<pre>" .. esc(table.concat(lines, "\n")) .. "</pre>"
-    end
-
-    if CONFIG.IncludeAttributes then
-        local attrs = collectAttributes(inst)
-        if #attrs > 0 then
-            local lines = {}
-            for _, a in ipairs(attrs) do lines[#lines+1] = a.name .. " = " .. valToStr(a.value) end
-            parts[#parts+1] = "<b>🏷️ Attributes (" .. #attrs .. ")</b>\n<pre>" .. esc(table.concat(lines, "\n")) .. "</pre>"
+    if isDeep then
+        local flat = {}
+        local cap = CONFIG.MaxDeepCount or 400
+        for _, inst in ipairs(instances) do
+            if typeof(inst) == "Instance" then
+                collectAllDescendants(inst, flat, cap)
+            end
+            if #flat >= cap then break end
+        end
+        
+        htmlParts[#htmlParts+1] = string.format('<div class="meta">Total Descendants Dumped: %d</div>', #flat)
+        
+        for i, inst in ipairs(flat) do
+            local cok, html = pcall(buildInstanceHtml, inst, true)
+            if cok then htmlParts[#htmlParts+1] = html end
+            if i % CONFIG.DeepPauseEvery == 0 then task.wait() end
+        end
+    else
+        for i, inst in ipairs(instances) do
+            if typeof(inst) == "Instance" then
+                local cok, html = pcall(buildInstanceHtml, inst, false)
+                if cok then htmlParts[#htmlParts+1] = html end
+            end
+            if i % 2 == 0 then task.wait() end
         end
     end
 
-    if CONFIG.IncludeTags then
-        local tags = collectTags(inst)
-        if #tags > 0 then
-            parts[#parts+1] = "<b>🔖 Tags</b>\n<code>" .. esc(table.concat(tags, ", ")) .. "</code>"
-        end
-    end
-
-    if CONFIG.DeepIncludeTree and childCount > 0 then
-        local tree = childrenTree(inst, 1, CONFIG.MaxDepth, CONFIG.MaxChildren, "")
-        parts[#parts+1] = "<b>🌲 Tree</b>\n<pre>" .. esc(tree) .. "</pre>"
-    end
-
-    local src = collectSource(inst)
-    if src then
-        if #src > 12000 then
-            src = src:sub(1, 12000) .. "\n\n-- …truncated (" .. (#src - 12000) .. " more chars)"
-        end
-        parts[#parts+1] = "<b>📜 Script Source</b>\n<pre>" .. esc(src) .. "</pre>"
-    end
-
-    return table.concat(parts, "\n\n")
+    htmlParts[#htmlParts+1] = "</body></html>"
+    return table.concat(htmlParts, "\n")
 end
 
 -- ============================================================
--- Telegram sender
+-- Telegram File Sender
 -- ============================================================
-local function chunkMessage(msg, max)
-    max = max or CONFIG.ChunkSize
-    local chunks, current = {}, ""
-    for para in (msg .. "\n\n"):gmatch("(.-)\n\n") do
-        if #current + #para + 2 > max then
-            if #current > 0 then
-                chunks[#chunks+1] = current
-                current = ""
-            end
-            while #para > max do
-                chunks[#chunks+1] = para:sub(1, max)
-                para = para:sub(max+1)
-            end
-        end
-        current = (#current > 0) and (current .. "\n\n" .. para) or para
-    end
-    if #current > 0 then chunks[#chunks+1] = current end
-    return chunks
-end
-
--- Strips bytes that break Roblox's JSONEncode: null bytes, invalid UTF-8, 
--- and C0/C1 control chars. Keeps \n, \r, \t, and any valid UTF-8 sequence.
-local function sanitizeForJson(s)
-    if type(s) ~= "string" then s = tostring(s) end
-    
-    -- 1. Strip invalid C0 control characters (except \t \n \r) and DEL (127)
-    s = s:gsub("[%z\1-\8\11\12\14-\31\127]", "")
-    
-    -- 2. Strip invalid UTF-8 byte sequences using a byte-level state machine
-    local bytes = {string.byte(s, 1, #s)}
-    local result = {}
-    local i = 1
-    local len = #bytes
-    
-    while i <= len do
-        local b1 = bytes[i]
-        if b1 < 128 then
-            table.insert(result, string.char(b1))
-            i = i + 1
-        elseif b1 >= 194 and b1 <= 223 then
-            if i + 1 <= len and bytes[i+1] >= 128 and bytes[i+1] <= 191 then
-                table.insert(result, string.char(b1, bytes[i+1]))
-                i = i + 2
-            else i = i + 1 end
-        elseif b1 >= 224 and b1 <= 239 then
-            if i + 2 <= len and bytes[i+1] >= 128 and bytes[i+1] <= 191 and bytes[i+2] >= 128 and bytes[i+2] <= 191 then
-                table.insert(result, string.char(b1, bytes[i+1], bytes[i+2]))
-                i = i + 3
-            else i = i + 1 end
-        elseif b1 >= 240 and b1 <= 244 then
-            if i + 3 <= len and bytes[i+1] >= 128 and bytes[i+1] <= 191 and bytes[i+2] >= 128 and bytes[i+2] <= 191 and bytes[i+3] >= 128 and bytes[i+3] <= 191 then
-                table.insert(result, string.char(b1, bytes[i+1], bytes[i+2], bytes[i+3]))
-                i = i + 4
-            else i = i + 1 end
-        else
-            i = i + 1
-        end
-    end
-    
-    return table.concat(result)
-end
-
--- Manual JSON string escaping (used as fallback if JSONEncode errors out)
-local function jsonEscape(s)
-    s = sanitizeForJson(s)
-    s = s:gsub('\\', '\\\\')
-    s = s:gsub('"', '\\"')
-    s = s:gsub('\n', '\\n')
-    s = s:gsub('\r', '\\r')
-    s = s:gsub('\t', '\\t')
-    return s
-end
-
-local function tgSend(text)
+local function tgSendFile(htmlContent, filename)
     if not CONFIG.BotToken or CONFIG.BotToken == "" then
         return false, "BotToken is empty"
     end
@@ -458,58 +364,41 @@ local function tgSend(text)
         return false, "ChatId is empty"
     end
 
-    -- Pre-sanitize text to ensure it doesn't break JSONEncode
-    text = sanitizeForJson(text)
-
-    local url = "https://api.telegram.org/bot" .. CONFIG.BotToken .. "/sendMessage"
-    local body
-    local okEnc, encoded = pcall(HttpService.JSONEncode, HttpService, {
-        chat_id = CONFIG.ChatId,
-        text = text,
-        parse_mode = "HTML", -- Tells Telegram to parse as HTML
-        disable_web_page_preview = true,
-    })
+    local url = "https://api.telegram.org/bot" .. CONFIG.BotToken .. "/sendDocument"
+    local boundary = "----DEXExportBoundary" .. tostring(math.random(10000000, 99999999))
+    local CRLF = "\r\n"
     
-    if okEnc and type(encoded) == "string" then
-        body = encoded
-    else
-        warn("[TG-Export] JSONEncode failed, using manual fallback: " .. tostring(encoded))
-        local chatIdStr = tostring(CONFIG.ChatId)
-        local chatIdJson = chatIdStr:match("^%-?%d+$") and chatIdStr or ('"' .. jsonEscape(chatIdStr) .. '"')
-        body = string.format(
-            '{"chat_id":%s,"text":"%s","parse_mode":"HTML","disable_web_page_preview":true}',
-            chatIdJson,
-            jsonEscape(text)
-        )
-    end
+    local caption = "🧩 DEX Export | Place: " .. tostring(game.PlaceId)
+    
+    -- Build multipart/form-data manually
+    local body = "--" .. boundary .. CRLF ..
+        'Content-Disposition: form-data; name="chat_id"' .. CRLF .. CRLF ..
+        tostring(CONFIG.ChatId) .. CRLF ..
+        "--" .. boundary .. CRLF ..
+        'Content-Disposition: form-data; name="caption"' .. CRLF .. CRLF ..
+        caption .. CRLF ..
+        "--" .. boundary .. CRLF ..
+        'Content-Disposition: form-data; name="parse_mode"' .. CRLF .. CRLF ..
+        "HTML" .. CRLF ..
+        "--" .. boundary .. CRLF ..
+        'Content-Disposition: form-data; name="document"; filename="' .. filename .. '"' .. CRLF ..
+        "Content-Type: text/html" .. CRLF .. CRLF ..
+        htmlContent .. CRLF ..
+        "--" .. boundary .. "--" .. CRLF
 
     local ok, res = pcall(httpRequest, {
         Url = url,
         Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
+        Headers = { 
+            ["Content-Type"] = "multipart/form-data; boundary=" .. boundary
+        },
         Body = body,
     })
+    
     if not ok then return false, tostring(res) end
     if not res or not res.Body then return false, "no response" end
     if res.StatusCode and res.StatusCode ~= 200 then
         return false, "HTTP " .. res.StatusCode .. " " .. tostring(res.Body)
-    end
-    return true
-end
-
-local function sendChunked(fullText)
-    local chunks = chunkMessage(fullText, CONFIG.ChunkSize)
-    local total = #chunks
-    for i, chunk in ipairs(chunks) do
-        if total > 1 then
-            chunk = chunk .. "\n\n<i>— part " .. i .. "/" .. total .. " —</i>"
-        end
-        local ok, err = tgSend(chunk)
-        if not ok then
-            warn("[TG-Export] Failed chunk " .. i .. ": " .. tostring(err))
-            return false, err
-        end
-        if i < total then task.wait(0.9) end -- rate-limit friendly (raised for deep mode)
     end
     return true
 end
@@ -569,33 +458,16 @@ local function sendInstances(instances)
         toast("[TG-Export] Nothing selected.", true)
         return
     end
-    toast("[TG-Export] Building dump…")
+    toast("[TG-Export] Compiling HTML file…")
     task.spawn(function()
         local ok, err = pcall(function()
-            local chunks = {}
-            local header = "<b>🧩 DEX REContinued Export</b>\n<i>Place:</i> <code>" ..
-                esc(tostring(game.PlaceId)) .. "</code>\n<i>Count:</i> " .. #instances
-            chunks[#chunks+1] = header
-            for i, inst in ipairs(instances) do
-                if typeof(inst) == "Instance" then
-                    local cok, chunk = pcall(buildInstanceChunk, inst)
-                    if cok then
-                        chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n" .. chunk
-                    else
-                        chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n<b>⚠️ Failed:</b> <pre>" ..
-                            esc(tostring(chunk)) .. "</pre>"
-                    end
-                end
-                if i % 2 == 0 then task.wait() end
-            end
-            local full = table.concat(chunks, "\n\n")
-            local sok, serr = sendChunked(full)
+            local htmlContent = compileHtmlFile(instances, false)
+            local filename = "DEX_Export_" .. tostring(os.time()) .. ".html"
+            local sok, serr = tgSendFile(htmlContent, filename)
             if not sok then error(serr) end
         end)
         if ok then
-            if not CONFIG.Silent then
-                toast("[TG-Export] Sent " .. #instances .. " instance(s).")
-            end
+            if not CONFIG.Silent then toast("[TG-Export] ✔ HTML file sent.") end
         else
             toast("[TG-Export] Failed: " .. tostring(err), true)
             warn("[TG-Export] " .. tostring(err))
@@ -603,59 +475,21 @@ local function sendInstances(instances)
     end)
 end
 
--- ============================================================
--- [NEW] Deep send — every descendant gets its own full HTML block
--- ============================================================
 local function sendInstancesDeep(instances)
     if type(instances) ~= "table" or #instances == 0 then
         toast("[TG-Export] Nothing selected.", true)
         return
     end
-    toast("[TG-Export] Building deep dump…")
+    toast("[TG-Export] Compiling Deep HTML file…")
     task.spawn(function()
         local ok, err = pcall(function()
-            local flat = {}
-            local cap  = CONFIG.MaxDeepCount or 400
-            for _, inst in ipairs(instances) do
-                if typeof(inst) == "Instance" then
-                    collectAllDescendants(inst, flat, cap)
-                end
-                if #flat >= cap then break end
-            end
-
-            local truncated = (#flat >= cap)
-
-            local chunks = {}
-            chunks[#chunks+1] = table.concat({
-                "<b>🧩 DEX REContinued Export — DEEP</b>",
-                "<i>Place:</i> <code>" .. esc(tostring(game.PlaceId)) .. "</code>",
-                "<i>Roots:</i> " .. #instances,
-                "<i>Total instances:</i> " .. #flat .. (truncated and " <i>(capped at "..cap..")</i>" or ""),
-            }, "\n")
-
-            local pauseEvery = CONFIG.DeepPauseEvery or 5
-            for i, inst in ipairs(flat) do
-                local cok, chunk = pcall(buildInstanceChunkFlat, inst)
-                if cok then
-                    chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n" .. chunk
-                else
-                    chunks[#chunks+1] = "━━━━━━━━━━━━━━━━━━━━\n<b>⚠️ Failed to dump:</b> <pre>" ..
-                        esc(tostring(chunk)) .. "</pre>"
-                end
-                if i % pauseEvery == 0 then task.wait() end
-            end
-
-            if truncated then
-                chunks[#chunks+1] = "<i>⚠️ Output capped at " .. cap ..
-                    " instances. Increase CONFIG.MaxDeepCount to send more.</i>"
-            end
-
-            local full = table.concat(chunks, "\n\n")
-            local sok, serr = sendChunked(full)
+            local htmlContent = compileHtmlFile(instances, true)
+            local filename = "DEX_DeepExport_" .. tostring(os.time()) .. ".html"
+            local sok, serr = tgSendFile(htmlContent, filename)
             if not sok then error(serr) end
         end)
         if ok then
-            if not CONFIG.Silent then toast("[TG-Export] ✔ Deep dump sent.") end
+            if not CONFIG.Silent then toast("[TG-Export] ✔ Deep HTML file sent.") end
         else
             toast("[TG-Export] ❌ Deep failed: " .. tostring(err), true)
             warn("[TG-Export] " .. tostring(err))
@@ -692,9 +526,7 @@ local function hookDEX()
         if Explorer then break end
         task.wait(0.5)
     end
-    if not Explorer then
-        return false, "Could not find DEX Explorer table"
-    end
+    if not Explorer then return false, "Could not find DEX Explorer table" end
 
     local ctx = rawget(Explorer, "RightClickContext")
     if not ctx then return false, "No RightClickContext" end
@@ -711,53 +543,34 @@ local function hookDEX()
         return objs
     end
 
-    local function onClick()
-        sendInstances(getSelectedObjs())
-    end
-
-    local function onClickDeep()
-        sendInstancesDeep(getSelectedObjs())
-    end
-
-    -- Register both custom items
     pcall(function()
         ctx:Register("SEND_TO_TG", {
-            Name = "Send to Telegram",
+            Name = "Send to Telegram (HTML)",
             Icon = ICON,
-            OnClick = onClick,
+            OnClick = function() sendInstances(getSelectedObjs()) end,
         })
         ctx:Register("SEND_TO_TG_DEEP", {
-            Name = "Send to Telegram (Deep)",
+            Name = "Send to Telegram (Deep HTML)",
             Icon = ICON,
-            OnClick = onClickDeep,
+            OnClick = function() sendInstancesDeep(getSelectedObjs()) end,
         })
     end)
 
-    -- Hook Show so items are re-added after ShowRightClick clears the menu
     if not rawget(ctx, "__dextg_hooked") then
         rawset(ctx, "__dextg_hooked", true)
         local oldShow = ctx.Show
         ctx.Show = function(self, x, y)
             if not self.Registered or not self.Registered["SEND_TO_TG"] then
-                self:Register("SEND_TO_TG", {
-                    Name = "Send to Telegram",
-                    Icon = ICON,
-                    OnClick = onClick,
-                })
+                self:Register("SEND_TO_TG", { Name = "Send to Telegram (HTML)", Icon = ICON, OnClick = function() sendInstances(getSelectedObjs()) end })
             end
             if not self.Registered or not self.Registered["SEND_TO_TG_DEEP"] then
-                self:Register("SEND_TO_TG_DEEP", {
-                    Name = "Send to Telegram (Deep)",
-                    Icon = ICON,
-                    OnClick = onClickDeep,
-                })
+                self:Register("SEND_TO_TG_DEEP", { Name = "Send to Telegram (Deep HTML)", Icon = ICON, OnClick = function() sendInstancesDeep(getSelectedObjs()) end })
             end
             self:AddRegistered("SEND_TO_TG")
             self:AddRegistered("SEND_TO_TG_DEEP")
             return oldShow(self, x, y)
         end
     end
-
     return true, Explorer
 end
 
@@ -774,7 +587,7 @@ local function buildFallbackPanel()
     if syn and syn.protect_gui then pcall(syn.protect_gui, sg) end
 
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 240, 0, 176)                -- [CHANGED] taller for extra buttons
+    frame.Size = UDim2.new(0, 240, 0, 176)
     frame.Position = UDim2.new(0, 20, 0.5, -88)
     frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
     frame.BorderSizePixel = 0
@@ -795,7 +608,7 @@ local function buildFallbackPanel()
     title.TextSize = 13
     title.TextColor3 = Color3.fromRGB(240,240,240)
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Text = "TG Export"
+    title.Text = "TG Export (.html)"
 
     local close = Instance.new("TextButton", frame)
     close.Size = UDim2.new(0, 20, 0, 20)
@@ -822,7 +635,6 @@ local function buildFallbackPanel()
         b.MouseEnter:Connect(function() b.BackgroundColor3 = Color3.fromRGB(60,60,60) end)
         b.MouseLeave:Connect(function() b.BackgroundColor3 = Color3.fromRGB(45,45,45) end)
         b.MouseButton1Click:Connect(cb)
-        return b
     end
 
     mkBtn("Pick from world", 30, function()
@@ -830,16 +642,12 @@ local function buildFallbackPanel()
         local conn
         conn = UserInputService.InputBegan:Connect(function(input, gp)
             if gp then return end
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 conn:Disconnect()
                 local mouse = Players.LocalPlayer:GetMouse()
                 local target = mouse.Target
-                if target then
-                    sendInstances({ target })
-                else
-                    toast("[TG-Export] Nothing under cursor.", true)
-                end
+                if target then sendInstances({ target })
+                else toast("[TG-Export] Nothing under cursor.", true) end
             end
         end)
     end)
@@ -853,16 +661,11 @@ local function buildFallbackPanel()
                 if n and n.Obj then objs[#objs+1] = n.Obj end
             end
             sendInstances(objs)
-        else
-            toast("[TG-Export] Could not read DEX selection.", true)
-        end
+        else toast("[TG-Export] Could not read DEX selection.", true) end
     end)
 
-    mkBtn("Send Workspace", 86, function()
-        sendInstances({ workspace })
-    end)
+    mkBtn("Send Workspace", 86, function() sendInstances({ workspace }) end)
 
-    -- [NEW] deep buttons
     mkBtn("Send DEX selection (Deep)", 114, function()
         local Explorer = findExplorerTable()
         if Explorer and Explorer.Selection and Explorer.Selection.List then
@@ -872,14 +675,10 @@ local function buildFallbackPanel()
                 if n and n.Obj then objs[#objs+1] = n.Obj end
             end
             sendInstancesDeep(objs)
-        else
-            toast("[TG-Export] Could not read DEX selection.", true)
-        end
+        else toast("[TG-Export] Could not read DEX selection.", true) end
     end)
 
-    mkBtn("Send Workspace (Deep)", 142, function()
-        sendInstancesDeep({ workspace })
-    end)
+    mkBtn("Send Workspace (Deep)", 142, function() sendInstancesDeep({ workspace }) end)
 end
 
 -- ============================================================
@@ -888,15 +687,9 @@ end
 task.spawn(function()
     if not CONFIG.BotToken or CONFIG.BotToken == "" or not CONFIG.ChatId or CONFIG.ChatId == "" then
         toast("[TG-Export] Fill BotToken & ChatId in CONFIG.", true)
-        warn("[TG-Export] BotToken / ChatId empty — nothing will send.")
     end
-
     local ok, explorerOrErr = hookDEX()
-    if ok then
-        print("[TG-Export] Hooked into DEX context menu ✔")
-    else
-        warn("[TG-Export] DEX hook failed: " .. tostring(explorerOrErr))
-    end
-
+    if ok then print("[TG-Export] Hooked into DEX context menu ✔")
+    else warn("[TG-Export] DEX hook failed: " .. tostring(explorerOrErr)) end
     buildFallbackPanel()
 end)
