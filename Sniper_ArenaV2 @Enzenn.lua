@@ -1417,10 +1417,20 @@ end)
 			selection:Clear()
 		end})
 
-		context:Register("COPY_API_PAGE",{Name = "Copy Roblox API Page URL", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
-			local sList = selection.List
-			if #sList == 1 then env.setclipboard("https://create.roblox.com/docs/reference/engine/classes/"..sList[1].Obj.ClassName) end
-		end})
+        context:Register("COPY_API_PAGE",{Name = "Copy Roblox API Page URL", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
+            local sList = selection.List
+            if #sList == 1 then env.setclipboard("https://create.roblox.com/docs/reference/engine/classes/"..sList[1].Obj.ClassName) end
+        end})
+
+        context:Register("SEND_TELEGRAM_FULL",{Name = "Send Full Details to Telegram", IconMap = Explorer.MiscIcons, Icon = "Reference", OnClick = function()
+            local sList = selection.List
+            if sList and sList[1] then
+                sendFullDetailsToTelegram(sList[1].Obj)
+            end
+        end})
+        
+        
+        context:Register("DUMP_FUNCTIONS",{Name = "Dump Functions", IconMap = Explorer.MiscIcons, Icon = "SelectChildren", DisabledIcon = "Empty", OnClick = function()
 		
 		
 		context:Register("DUMP_FUNCTIONS",{Name = "Dump Functions", IconMap = Explorer.MiscIcons, Icon = "SelectChildren", DisabledIcon = "Empty", OnClick = function()
