@@ -1,11 +1,8 @@
--- StarterGui > AdminMenu (LocalScript)
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local ReplicatedStorage = game:WaitForChild("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local adminRemote = ReplicatedStorage:WaitForChild("AdminAction")
 
 --// Theme
 local Theme = {
@@ -13,22 +10,26 @@ local Theme = {
     Sidebar = Color3.fromRGB(25, 25, 30),
     TopBar = Color3.fromRGB(20, 20, 25),
     Button = Color3.fromRGB(45, 45, 55),
-    ButtonHover = Color3.fromRGB(60, 60, 75),
     Accent = Color3.fromRGB(0, 162, 255),
     Text = Color3.fromRGB(255, 255, 255),
     SubText = Color3.fromRGB(150, 150, 150),
     Danger = Color3.fromRGB(200, 50, 50)
 }
 
+-- Remove old UI if it exists
+if playerGui:FindFirstChild("ExecutorMenu") then
+    playerGui.ExecutorMenu:Destroy()
+end
+
 --// Core Setup
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "AdvancedAdminMenu"
+screenGui.Name = "ExecutorMenu"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 550, 0, 380)
-mainFrame.Position = UDim2.new(0.5, -275, 0.5, -190)
+mainFrame.Size = UDim2.new(0, 500, 0, 350)
+mainFrame.Position = UDim2.new(0.5, -250, 0.5, -175)
 mainFrame.BackgroundColor3 = Theme.Background
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
@@ -52,7 +53,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -20, 1, 0)
 title.Position = UDim2.new(0, 15, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "ADMIN PANEL"
+title.Text = "LOCAL PANEL"
 title.TextColor3 = Theme.Text
 title.Font = Enum.Font.GothamBold
 title.TextSize = 16
@@ -114,12 +115,11 @@ local function createTab(name)
     return page
 end
 
-local mainPage = createTab("Main")
+local mainPage = createTab("Local")
 local playersPage = createTab("Players")
 
--- Default tab
-pages["Main"].Button.BackgroundColor3 = Theme.Accent
-pages["Main"].Button.TextColor3 = Theme.Text
+pages["Local"].Button.BackgroundColor3 = Theme.Accent
+pages["Local"].Button.TextColor3 = Theme.Text
 mainPage.Visible = true
 
 ---------------------------------------------------------
@@ -204,104 +204,36 @@ local function createSlider(parent, text, min, max, default, callback)
     end)
 end
 
-local selectedPlayer = nil
-
-local function createPlayerButton(targetPlayer)
-    local holder = Instance.new("Frame")
-    holder.Size = UDim2.new(1, -10, 0, 35)
-    holder.BackgroundColor3 = Theme.Button
-    holder.Parent = playersPage
-    Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 6)
-
-    local nameBtn = Instance.new("TextButton")
-    nameBtn.Size = UDim2.new(0.5, 0, 1, 0)
-    nameBtn.BackgroundTransparency = 1
-    nameBtn.Text = targetPlayer.Name
-    nameBtn.TextColor3 = Theme.Text
-    nameBtn.Font = Enum.Font.Gotham
-    nameBtn.TextSize = 14
-    nameBtn.TextXAlignment = Enum.TextXAlignment.Left
-    nameBtn.Parent = holder
-    
-    local selectionMarker = Instance.new("Frame")
-    selectionMarker.Size = UDim2.new(0, 4, 0.8, 0)
-    selectionMarker.Position = UDim2.new(0, 2, 0.1, 0)
-    selectionMarker.BackgroundColor3 = Theme.Accent
-    selectionMarker.Visible = false
-    selectionMarker.Parent = holder
-    Instance.new("UICorner", selectionMarker).CornerRadius = UDim.new(1, 0)
-
-    -- Action Buttons
-    local function createActionBtn(text, color, action)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 70, 0.7, 0)
-        btn.Position = UDim2.new(1, -75, 0.15, 0)
-        btn.BackgroundColor3 = color
-        btn.Text = text
-        btn.TextColor3 = Theme.Text
-        btn.Font = Enum.Font.GothamBold
-        btn.TextSize = 12
-        btn.Parent = holder
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-        
-        -- Shift buttons to the left dynamically
-        btn.Position = UDim2.new(1, -75 - (75 * tonumber(btn.Name)), 0.15, 0)
-        
-        btn.MouseButton1Click:Connect(function()
-            if selectedPlayer == targetPlayer then
-                adminRemote:FireServer(action, targetPlayer)
+---------------------------------------------------------
+-- POPULATE MENU (Local Features Only)
+---------------------------------------------------------
+createToggle(mainPage, "Infinite Jump", function(state)
+    local conn
+    if state then
+        conn = UserInputService.JumpRequest:Connect(function()
+            local char = player.Character
+            if char and char:FindFirstChild("Humanoid") then
+                char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
             end
         end)
-        return btn
-    end
-
-    -- Create actions
-    local tpBtn = createActionBtn("TP", Theme.Button, "TeleportTo")
-    tpBtn.Name = "1"
-    local freezeBtn = createActionBtn("Freeze", Theme.Button, "Freeze")
-    freezeBtn.Name = "2"
-    local killBtn = createActionBtn("Kill", Theme.Button, "Kill")
-    killBtn.Name = "3"
-    local kickBtn = createActionBtn("Kick", Theme.Danger, "Kick")
-    kickBtn.Name = "4"
-
-    -- Selection Logic
-    nameBtn.MouseButton1Click:Connect(function()
-        selectedPlayer = targetPlayer
-        -- Remove highlight from all
-        for _, child in pairs(playersPage:GetChildren()) do
-            if child:IsA("Frame") and child:FindFirstChild("selectionMarker") then
-                child.selectionMarker.Visible = false
-            end
+        -- Store connection to disconnect later
+        getgenv().InfJumpConn = conn
+    else
+        if getgenv().InfJumpConn then
+            getgenv().InfJumpConn:Disconnect()
+            getgenv().InfJumpConn = nil
         end
-        selectionMarker.Visible = true
-    end)
-
-    -- Auto-select first player
-    if not selectedPlayer then
-        selectedPlayer = targetPlayer
-        selectionMarker.Visible = true
-    end
-end
-
----------------------------------------------------------
--- POPULATE MENU
----------------------------------------------------------
-createToggle(mainPage, "God Mode (Local Visual)", function(state)
-    local char = player.Character
-    if char and char:FindFirstChild("Humanoid") then
-        char.Humanoid.MaxHealth = state and math.huge or 100
     end
 end)
 
-createSlider(mainPage, "WalkSpeed", 16, 100, 16, function(val)
+createSlider(mainPage, "WalkSpeed", 16, 250, 16, function(val)
     local char = player.Character
     if char and char:FindFirstChild("Humanoid") then
         char.Humanoid.WalkSpeed = val
     end
 end)
 
-createSlider(mainPage, "Jump Power", 50, 200, 50, function(val)
+createSlider(mainPage, "Jump Power", 50, 250, 50, function(val)
     local char = player.Character
     if char and char:FindFirstChild("Humanoid") then
         char.Humanoid.UseJumpPower = true
@@ -309,12 +241,22 @@ createSlider(mainPage, "Jump Power", 50, 200, 50, function(val)
     end
 end)
 
+-- Just list players for visual purposes
 local function updatePlayerList()
     for _, child in pairs(playersPage:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
     end
     for _, p in pairs(Players:GetPlayers()) do
-        createPlayerButton(p)
+        local pLabel = Instance.new("TextLabel")
+        pLabel.Size = UDim2.new(1, -10, 0, 30)
+        pLabel.BackgroundColor3 = Theme.Button
+        pLabel.Text = " " .. p.Name
+        pLabel.TextColor3 = Theme.Text
+        pLabel.Font = Enum.Font.Gotham
+        pLabel.TextSize = 14
+        pLabel.TextXAlignment = Enum.TextXAlignment.Left
+        pLabel.Parent = playersPage
+        Instance.new("UICorner", pLabel).CornerRadius = UDim.new(0, 6)
     end
 end
 
